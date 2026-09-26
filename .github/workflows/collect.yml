@@ -38,6 +38,8 @@ jobs:
   collect:
     if: github.event_name == 'workflow_dispatch' || vars.ENABLE_SCHEDULE == 'true'
     runs-on: ubuntu-latest
+    # Secrets live in the Actions Environment named DATABASE_URL (repo Settings → Environments).
+    environment: DATABASE_URL
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
@@ -46,6 +48,14 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
+      - name: Require database secret
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::DATABASE_URL is empty. Add it under Settings → Environments → DATABASE_URL (or Repository secrets) and ensure this job uses environment: DATABASE_URL."
+            exit 1
+          fi
       - name: Collect
         run: python -m app.worker --max-seconds 480
         env:
