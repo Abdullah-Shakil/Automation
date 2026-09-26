@@ -8,3 +8,6 @@ __pycache__/
 data/
 *.sqlite3
 .DS_Store
+
+.env.*
+!.env.example
