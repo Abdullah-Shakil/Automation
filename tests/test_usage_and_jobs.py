@@ -62,12 +62,14 @@ def _registry(*adapters):
 def _bot(db, **kwargs):
     now = kwargs.get("created_at", datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc))
     bot = Bot(
+        name=kwargs.get("name", "Test bot"),
         location=kwargs.get("location", "Hackney, London"),
         source=kwargs.get("source", "scripted"),
         status=kwargs.get("status", "running"),
         professions=[{"slug": "plumber", "label": "Plumbers", "keywords": ["plumber"], "sic_codes": ["43220"], "osm_tags": []}],
         checkpoint=kwargs.get("checkpoint", {}),
         progress_note="",
+        selected_worker=kwargs.get("selected_worker", ""),
         last_error="",
         leads_found=0,
         duplicates_found=0,

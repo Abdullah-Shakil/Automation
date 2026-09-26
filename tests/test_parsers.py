@@ -1,18 +1,14 @@
-import json
-
 import httpx
 
 from app.config import get_settings
 from app.sources.base import FatalSourceError, FetchContext
 from app.sources.companies_house import CompaniesHouseAdapter, parse_companies_house_items
-from app.sources.directory import DirectoryAdapter, parse_directory_html
-from app.sources.google_places import parse_google_places
 from app.sources.overpass import make_tiles, parse_overpass_elements
 
 
-def _ctx(settings, checkpoint=None, professions=None):
+def _ctx(settings, checkpoint=None, professions=None, location="England"):
     return FetchContext(
-        location="Barnes, London",
+        location=location,
         professions=professions
         or [
             {
@@ -60,7 +56,7 @@ def test_companies_house_fetch_pages_until_the_sic_is_exhausted():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.host == "api.company-information.service.gov.uk"
         assert request.url.params["sic_codes"] == "43220"
-        assert request.url.params["location"] == "Barnes, London"
+        assert "location" not in request.url.params
         pages["n"] += 1
         if request.url.params["start_index"] == "0":
             items = [
@@ -163,89 +159,21 @@ def test_overpass_parser_and_tiles():
     assert tiles[0]["south"] < tiles[0]["north"]
 
 
-def test_google_places_parser():
-    leads, token = parse_google_places(
+def test_serper_organic_parser():
+    from app.sources.serper import parse_serper_organic
+
+    leads = parse_serper_organic(
         {
-            "places": [
+            "organic": [
                 {
-                    "id": "abc",
-                    "displayName": {"text": "River Plumbing"},
-                    "formattedAddress": "1 High Street, London SW13 9LW",
-                    "nationalPhoneNumber": "020 7946 0000",
-                    "websiteUri": "https://river.example",
-                    "googleMapsUri": "https://maps.google.com/?cid=1",
+                    "title": "River Plumbing - Barnes",
+                    "link": "https://river.example/",
+                    "snippet": "Boiler repairs in London SW13 9LW",
                 }
-            ],
-            "nextPageToken": "next",
+            ]
         },
         "Plumbers",
     )
-    assert token == "next"
     assert leads[0].business_name == "River Plumbing"
     assert leads[0].postcode == "SW13 9LW"
-    assert leads[0].website == "https://river.example"
-
-
-def test_directory_parser_reads_jsonld():
-    html = """
-    <html><head>
-    <script type="application/ld+json">
-    {"@context":"https://schema.org","@type":"Plumber","name":"Pipes & Co",
-     "telephone":"02079460000","email":"hello@pipes.example",
-     "url":"https://pipes.example",
-     "address":{"@type":"PostalAddress","streetAddress":"1 High Street",
-                "addressLocality":"Barnes","postalCode":"SW13 9LW"}}
-    </script>
-    </head></html>
-    """
-    leads = parse_directory_html(html, "https://directory.example/search?q=plumber", "Plumbers")
-    assert len(leads) == 1
-    assert leads[0].business_name == "Pipes & Co"
-    assert leads[0].email == "hello@pipes.example"
-    assert leads[0].postcode == "SW13 9LW"
-
-
-def test_directory_refuses_when_robots_disallows_and_does_not_fetch_the_page():
-    seen = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request.url.path)
-        if request.url.path == "/robots.txt":
-            return httpx.Response(200, text="User-agent: *\nDisallow: /\n")
-        return httpx.Response(200, text="should not be fetched")
-
-    settings = get_settings().model_copy(
-        update={
-            "directory_search_url_template": "https://directory.example/search?q={keyword}&where={location}&page={page}",
-            "directory_min_interval_seconds": 0,
-        }
-    )
-    adapter = DirectoryAdapter(client=httpx.Client(transport=httpx.MockTransport(handler)))
-    try:
-        adapter.fetch(_ctx(settings))
-    except FatalSourceError as exc:
-        assert "robots.txt" in str(exc)
-    else:
-        raise AssertionError("expected robots.txt to stop the fetch")
-    assert seen == ["/robots.txt"]
-
-
-def test_directory_fetch_when_robots_allows():
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/robots.txt":
-            return httpx.Response(200, text="User-agent: *\nDisallow:\n")
-        body = json.dumps({"@type": "Electrician", "name": "Bright Spark", "telephone": "02070000000"})
-        html = f'<html><script type="application/ld+json">{body}</script></html>'
-        return httpx.Response(200, text=html)
-
-    settings = get_settings().model_copy(
-        update={
-            "directory_search_url_template": "https://directory.example/search?q={keyword}&where={location}&page={page}",
-            "directory_min_interval_seconds": 0,
-        }
-    )
-    adapter = DirectoryAdapter(client=httpx.Client(transport=httpx.MockTransport(handler)))
-    result = adapter.fetch(_ctx(settings))
-    assert result.leads[0].business_name == "Bright Spark"
-    assert result.requests_made == 2
-    assert result.checkpoint["page"] == 2
+    assert leads[0].website == "https://river.example/"

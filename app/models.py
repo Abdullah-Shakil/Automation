@@ -23,17 +23,19 @@ class Profession(Base):
 
 
 class Bot(Base):
-    """One collection the owner added: a profession set, an area, and a source."""
+    """One collection the owner added: a profession set and a source (England-wide)."""
 
     __tablename__ = "bots"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), default="")
     location: Mapped[str] = mapped_column(String(200))
     source: Mapped[str] = mapped_column(String(40), index=True)
     status: Mapped[str] = mapped_column(String(32), index=True, default="running")
     professions: Mapped[list] = mapped_column(JSON)
     checkpoint: Mapped[dict] = mapped_column(JSON)
     progress_note: Mapped[str] = mapped_column(String(400), default="")
+    selected_worker: Mapped[str] = mapped_column(String(80), default="")
     last_error: Mapped[str] = mapped_column(String(500), default="")
     leads_found: Mapped[int] = mapped_column(Integer, default=0)
     duplicates_found: Mapped[int] = mapped_column(Integer, default=0)
@@ -67,9 +69,26 @@ class Lead(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     address: Mapped[str | None] = mapped_column(Text, nullable=True)
     postcode: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    trading_name: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    company_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    company_number: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    company_status: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    category: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    sic_codes: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    incorporated_on: Mapped[str | None] = mapped_column(String(20), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    mobile: Mapped[str | None] = mapped_column(String(40), nullable=True)
     website: Mapped[str | None] = mapped_column(String(500), nullable=True)
     email: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    address_line1: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    address_line2: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    town: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    county: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    officers: Mapped[str | None] = mapped_column(Text, nullable=True)
+    social_links: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enrichment_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    enrichment_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    enriched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     primary_source: Mapped[str] = mapped_column(String(40), index=True)
     primary_source_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     sources: Mapped[str] = mapped_column(String(240), default="")
@@ -112,6 +131,15 @@ class UsageWindow(Base):
     window_key: Mapped[str] = mapped_column(String(80))
     window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     requests_used: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class AppSetting(Base):
+    """Dashboard choices stored in the shared database. The PC never collects from these."""
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    value: Mapped[str] = mapped_column(String(200), default="")
 
 
 class WorkerHeartbeat(Base):

@@ -4,7 +4,7 @@ from contextlib import nullcontext
 import httpx
 
 from app.config import Settings
-from app.normalize import clip, extract_postcode, format_address
+from app.normalize import clip, extract_postcode, format_address, split_address
 from app.sources.base import (
     FatalSourceError,
     FetchContext,
@@ -15,6 +15,7 @@ from app.sources.base import (
     SourceQuota,
     TransientSourceError,
     http_headers,
+    is_nationwide,
 )
 
 PAGE_SIZE = 20
@@ -33,7 +34,11 @@ def parse_companies_house_items(items: list[dict], profession: str) -> list[RawL
             continue
         address_obj = item.get("registered_office_address") or item.get("address") or {}
         address = format_address(address_obj)
-        postcode = (address_obj.get("postal_code") or "").strip() or extract_postcode(address)
+        parts = split_address(address_obj)
+        postcode = parts["postcode"] or extract_postcode(address)
+        sic_codes = [str(code).strip() for code in (item.get("sic_codes") or []) if str(code).strip()]
+        company_type = str(item.get("company_type") or "").replace("-", " ").strip()
+        incorporated = str(item.get("date_of_creation") or "").strip()[:20]
         leads.append(
             RawLead(
                 business_name=name,
@@ -44,9 +49,41 @@ def parse_companies_house_items(items: list[dict], profession: str) -> list[RawL
                 source="companies_house",
                 source_url=PROFILE_URL.format(number=number),
                 external_id=number,
+                company_number=number,
+                company_type=company_type or None,
+                company_status=status,
+                category=profession,
+                sic_codes=", ".join(sic_codes[:8]) or None,
+                incorporated_on=incorporated or None,
+                address_line1=parts["address_line1"],
+                address_line2=parts["address_line2"],
+                town=parts["town"],
+                county=parts["county"],
             )
         )
     return leads
+
+
+def parse_officers(payload: dict) -> str:
+    """Names, roles, and appointment dates only. Officer home addresses are not stored."""
+    lines: list[str] = []
+    for item in payload.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        role = str(item.get("officer_role") or "").replace("-", " ").replace("_", " ").strip()
+        appointed = str(item.get("appointed_on") or "").strip()[:20]
+        bits = [name]
+        if role:
+            bits.append(role)
+        if appointed:
+            bits.append(appointed)
+        lines.append(" · ".join(bits))
+        if len(lines) >= 40:
+            break
+    return "\n".join(lines)
 
 
 class CompaniesHouseAdapter(SourceAdapter):
@@ -54,7 +91,7 @@ class CompaniesHouseAdapter(SourceAdapter):
     label = "Companies House"
     description = (
         "UK government register. Searches active companies by SIC code, or by keyword "
-        "when a trade has no SIC code, and by registered-office location. "
+        "when a trade has no SIC code. "
         "The register has the company name, address, and company type. It does not list a phone, website, or email."
     )
     quota = SourceQuota(
@@ -75,7 +112,10 @@ class CompaniesHouseAdapter(SourceAdapter):
 
     def is_available(self, settings: Settings) -> tuple[bool, str]:
         if not settings.companies_house_api_key:
-            return False, "Add COMPANIES_HOUSE_API_KEY. The free key is issued by Companies House."
+            return (
+                False,
+                "Add COMPANIES_HOUSE_API_KEY to .env. Free key: https://developer.company-information.service.gov.uk/",
+            )
         return True, ""
 
     def _session(self):
@@ -111,10 +151,11 @@ class CompaniesHouseAdapter(SourceAdapter):
         query = str(queries[query_index])
         params: dict[str, str | int] = {
             "company_status": "active",
-            "location": ctx.location,
             "size": PAGE_SIZE,
             "start_index": start_index,
         }
+        if not is_nationwide(ctx.location):
+            params["location"] = ctx.location
         if mode == "sic":
             params["sic_codes"] = query
         else:

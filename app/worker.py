@@ -5,7 +5,7 @@ import time
 
 from app.config import get_settings
 from app.db import init_db, session_scope
-from app.services.runner import tick
+from app.services.runner import require_cloud_worker, tick
 from app.sources.registry import default_registry
 
 logger = logging.getLogger("leadlane.worker")
@@ -60,6 +60,7 @@ def main() -> None:
         help="Exit after this many seconds, or sooner when nothing is due. Used by GitHub Actions. 0 means run until signalled.",
     )
     args = parser.parse_args()
+    require_cloud_worker()
     signal.signal(signal.SIGTERM, _handle_stop)
     signal.signal(signal.SIGINT, _handle_stop)
     run_forever(max_seconds=args.max_seconds)

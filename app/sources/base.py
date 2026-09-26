@@ -3,6 +3,24 @@ from dataclasses import dataclass
 
 from app.config import Settings
 
+# Bots collect across England (UK). Area is not a user setting.
+SEARCH_LOCATION = "England"
+
+_NATIONWIDE = frozenset(
+    {
+        "england",
+        "uk",
+        "u.k.",
+        "united kingdom",
+        "great britain",
+        "gb",
+    }
+)
+
+
+def is_nationwide(location: str | None) -> bool:
+    return " ".join((location or "").lower().split()) in _NATIONWIDE
+
 
 class FatalSourceError(Exception):
     """A problem the user must fix. The job stops."""
@@ -46,6 +64,20 @@ class RawLead:
     source: str = ""
     source_url: str | None = None
     external_id: str | None = None
+    trading_name: str | None = None
+    company_type: str | None = None
+    company_number: str | None = None
+    company_status: str | None = None
+    category: str | None = None
+    sic_codes: str | None = None
+    incorporated_on: str | None = None
+    mobile: str | None = None
+    address_line1: str | None = None
+    address_line2: str | None = None
+    town: str | None = None
+    county: str | None = None
+    officers: str | None = None
+    social_links: str | None = None
 
 
 @dataclass

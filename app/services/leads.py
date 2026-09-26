@@ -13,6 +13,11 @@ class LeadFilters:
     source: str = ""
     has_email: bool = False
     has_phone: bool = False
+    has_mobile: bool = False
+    company_number: str = ""
+    town: str = ""
+    status: str = ""
+    sic: str = ""
     page: int = 1
     per_page: int = 50
 
@@ -29,8 +34,28 @@ def apply_filters(stmt: Select, filters: LeadFilters) -> Select:
                 Lead.email.ilike(like),
                 Lead.website.ilike(like),
                 Lead.phone.ilike(like),
+                Lead.mobile.ilike(like),
+                Lead.trading_name.ilike(like),
+                Lead.company_number.ilike(like),
+                Lead.company_type.ilike(like),
+                Lead.company_status.ilike(like),
+                Lead.category.ilike(like),
+                Lead.sic_codes.ilike(like),
+                Lead.town.ilike(like),
+                Lead.county.ilike(like),
+                Lead.address_line1.ilike(like),
+                Lead.officers.ilike(like),
+                Lead.social_links.ilike(like),
             )
         )
+    if filters.company_number:
+        stmt = stmt.where(Lead.company_number.ilike(f"%{filters.company_number.strip()}%"))
+    if filters.town:
+        stmt = stmt.where(Lead.town.ilike(f"%{filters.town.strip()}%"))
+    if filters.status:
+        stmt = stmt.where(Lead.company_status.ilike(filters.status.strip()))
+    if filters.sic:
+        stmt = stmt.where(Lead.sic_codes.ilike(f"%{filters.sic.strip()}%"))
     if filters.profession:
         stmt = stmt.where(Lead.profession == filters.profession)
     if filters.source:
@@ -40,7 +65,14 @@ def apply_filters(stmt: Select, filters: LeadFilters) -> Select:
     if filters.has_email:
         stmt = stmt.where(Lead.email.is_not(None), Lead.email != "")
     if filters.has_phone:
-        stmt = stmt.where(Lead.phone.is_not(None), Lead.phone != "")
+        stmt = stmt.where(
+            or_(
+                Lead.phone.is_not(None) & (Lead.phone != ""),
+                Lead.mobile.is_not(None) & (Lead.mobile != ""),
+            )
+        )
+    if filters.has_mobile:
+        stmt = stmt.where(Lead.mobile.is_not(None), Lead.mobile != "")
     return stmt
 
 

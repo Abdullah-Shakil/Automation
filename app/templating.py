@@ -80,10 +80,10 @@ def describe_bot(bot) -> str:
     try:
         adapter = default_registry.get(bot.source)
     except KeyError:
-        return f"This bot collects {trades} in {bot.location}."
+        return f"This bot collects {trades} across England."
     quota = adapter.quota
     return (
-        f"This bot collects {trades} in {bot.location} from {adapter.label}. "
+        f"This bot collects {trades} across England from {adapter.label}. "
         f"{adapter.description} Free quota: {quota.title}. {quota.detail}"
     )
 

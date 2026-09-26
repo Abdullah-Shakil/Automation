@@ -45,6 +45,21 @@ def norm_name(name: str | None) -> str:
     return "".join(parts)
 
 
+def split_uk_phones(*values: str | None) -> tuple[str | None, str | None]:
+    """Return (landline, mobile). A UK mobile is a normalised number starting 07."""
+    landline = None
+    mobile = None
+    for value in values:
+        digits = norm_phone(value)
+        if not digits:
+            continue
+        if digits.startswith("07"):
+            mobile = mobile or digits
+        else:
+            landline = landline or digits
+    return landline, mobile
+
+
 def norm_phone(phone: str | None) -> str | None:
     if not phone:
         return None
@@ -100,6 +115,35 @@ def clip(value: str | None, limit: int) -> str | None:
     if not text:
         return None
     return text[:limit]
+
+
+def split_address(address: dict | None) -> dict[str, str | None]:
+    """Registered-office (or schema.org) address split into the lead columns."""
+    if not address:
+        return {
+            "address_line1": None,
+            "address_line2": None,
+            "town": None,
+            "county": None,
+            "postcode": None,
+        }
+    premises = (address.get("premises") or address.get("streetAddress") or "").strip()
+    line1 = (address.get("address_line_1") or "").strip()
+    if premises and line1:
+        first = f"{premises} {line1}".strip()
+    else:
+        first = premises or line1 or None
+    line2 = (address.get("address_line_2") or "").strip() or None
+    town = (address.get("locality") or address.get("addressLocality") or "").strip() or None
+    county = (address.get("region") or address.get("addressRegion") or "").strip() or None
+    postcode = (address.get("postal_code") or address.get("postalCode") or "").strip() or None
+    return {
+        "address_line1": first,
+        "address_line2": line2,
+        "town": town,
+        "county": county,
+        "postcode": postcode,
+    }
 
 
 def format_address(address: dict | None) -> str:

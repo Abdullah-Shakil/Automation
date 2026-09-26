@@ -10,7 +10,7 @@
 <form method="get" action="/leads" class="filters">
   <label>
     <span>Search</span>
-    <input name="q" value="{{ filters.q }}" placeholder="Name, description, postcode, phone">
+    <input name="q" value="{{ filters.q }}" placeholder="Name, number, town, SIC, phone, officer">
   </label>
   <label>
     <span>Profession</span>
@@ -34,9 +34,29 @@
     <input type="checkbox" name="has_email" value="1" {% if filters.has_email %}checked{% endif %}>
     <span>Has email</span>
   </label>
+  <label>
+    <span>Company number</span>
+    <input name="company_number" value="{{ filters.company_number }}" maxlength="32">
+  </label>
+  <label>
+    <span>Town</span>
+    <input name="town" value="{{ filters.town }}" maxlength="80">
+  </label>
+  <label>
+    <span>Status</span>
+    <input name="status" value="{{ filters.status }}" maxlength="40" placeholder="active">
+  </label>
+  <label>
+    <span>SIC</span>
+    <input name="sic" value="{{ filters.sic }}" maxlength="12" placeholder="43220">
+  </label>
   <label class="check">
     <input type="checkbox" name="has_phone" value="1" {% if filters.has_phone %}checked{% endif %}>
     <span>Has phone</span>
+  </label>
+  <label class="check">
+    <input type="checkbox" name="has_mobile" value="1" {% if filters.has_mobile %}checked{% endif %}>
+    <span>Has mobile</span>
   </label>
   <button type="submit">Filter</button>
 </form>
@@ -47,10 +67,13 @@
     <thead>
       <tr>
         <th>Business</th>
+        <th>Number</th>
+        <th>Town</th>
         <th>Profession</th>
         <th>Description</th>
         <th>Address</th>
-        <th>Phone</th>
+        <th>Landline</th>
+        <th>Mobile</th>
         <th>Website</th>
         <th>Email</th>
         <th>Source</th>
@@ -60,11 +83,14 @@
     <tbody>
       {% for lead in leads %}
       <tr>
-        <td>{{ lead.business_name }}</td>
-        <td>{{ lead.profession }}</td>
+        <td><a href="/leads/{{ lead.id }}">{{ lead.business_name }}</a></td>
+        <td>{{ lead.company_number or "—" }}</td>
+        <td>{{ lead.town or "—" }}</td>
+        <td>{{ lead.category or lead.profession }}</td>
         <td>{{ lead.description or "—" }}</td>
         <td>{{ lead.address or "—" }}</td>
         <td>{{ lead.phone or "—" }}</td>
+        <td>{{ lead.mobile or "—" }}</td>
         <td>
           {% if lead.website %}
           <a href="{{ lead.website }}" rel="noreferrer">{{ lead.website }}</a>

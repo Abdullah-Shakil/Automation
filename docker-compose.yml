@@ -30,17 +30,5 @@ services:
       timeout: 5s
       retries: 12
 
-  worker:
-    build: .
-    command: python -m app.worker
-    env_file:
-      - .env
-    environment:
-      DATABASE_URL: postgresql+psycopg://leadlane:leadlane@db:5432/leadlane
-    depends_on:
-      db:
-        condition: service_healthy
-    restart: unless-stopped
-
 volumes:
   leadlane-pg:

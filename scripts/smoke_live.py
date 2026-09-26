@@ -17,12 +17,13 @@ from sqlalchemy import func, select
 
 from app.db import init_db, session_scope
 from app.models import Bot, Lead
-from app.services.runner import tick
+from app.services.runner import require_cloud_worker, tick
 from app.sources.registry import default_registry
 from app.config import get_settings
 
 
 def main() -> int:
+    require_cloud_worker()
     settings = get_settings()
     init_db()
     now = datetime.now(timezone.utc)

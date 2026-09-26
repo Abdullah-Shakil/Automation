@@ -17,6 +17,7 @@ from app.sources.base import (
     SourceQuota,
     TransientSourceError,
     http_headers,
+    is_nationwide,
 )
 
 PAGE_SIZE = 20
@@ -66,8 +67,11 @@ def parse_wikidata_bindings(bindings: list[dict], profession: str) -> list[RawLe
 def build_query(keyword: str, place: str, offset: int) -> str:
     keyword = sparql_literal(keyword).lower()
     place = sparql_literal(place).lower()
-    if not keyword or not place:
-        raise FatalSourceError("Wikidata needs a profession keyword and a place name.")
+    if not keyword:
+        raise FatalSourceError("Wikidata needs a profession keyword.")
+    place_filter = ""
+    if place and not is_nationwide(place):
+        place_filter = f'\n  FILTER(CONTAINS(?hay, "{place}"))'
     return f"""
 SELECT ?item ?itemLabel ?desc ?website ?phone ?address WHERE {{
   SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en". }}
@@ -80,8 +84,7 @@ SELECT ?item ?itemLabel ?desc ?website ?phone ?address WHERE {{
   OPTIONAL {{ ?item wdt:P856 ?website }}
   OPTIONAL {{ ?item wdt:P1329 ?phone }}
   OPTIONAL {{ ?item wdt:P6375 ?address }}
-  BIND(LCASE(CONCAT(STR(?itemLabel), " ", COALESCE(STR(?desc), ""), " ", COALESCE(STR(?address), ""))) AS ?hay)
-  FILTER(CONTAINS(?hay, "{place}"))
+  BIND(LCASE(CONCAT(STR(?itemLabel), " ", COALESCE(STR(?desc), ""), " ", COALESCE(STR(?address), ""))) AS ?hay){place_filter}
 }}
 LIMIT {PAGE_SIZE}
 OFFSET {int(offset)}
@@ -92,8 +95,8 @@ class WikidataAdapter(SourceAdapter):
     key = "wikidata"
     label = "Wikidata"
     description = (
-        "UK businesses on Wikidata (recorded as a business, in the United Kingdom) whose English name contains the trade "
-        "and whose name, description, or address mentions the place. No API key. "
+        "UK businesses on Wikidata (recorded as a business, in the United Kingdom) whose English name contains the trade. "
+        "No API key. "
         "Small local trades are rarely in Wikidata; well-known firms are more likely."
     )
     quota = SourceQuota(

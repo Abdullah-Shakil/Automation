@@ -1,0 +1,8 @@
+name = "leadlane-trigger"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# Off until you uncomment this and set GH_DISPATCH_TOKEN plus GH_REPO.
+# Free plan: 5 cron triggers per account, 100,000 requests a day, no card.
+# [triggers]
+# crons = ["17 */3 * * *"]

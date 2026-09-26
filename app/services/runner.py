@@ -17,6 +17,21 @@ from app.sources.registry import Registry
 logger = logging.getLogger(__name__)
 
 
+def cloud_collection_enabled() -> bool:
+    """Collection is allowed only in the cloud runner, never from the dashboard process."""
+    return os.environ.get("LEADLANE_CLOUD_WORKER", "").strip() == "1"
+
+
+def require_cloud_worker() -> None:
+    if cloud_collection_enabled():
+        return
+    raise SystemExit(
+        "Collection runs only in the cloud worker. "
+        "The dashboard on this PC reads and writes the shared database and does not collect. "
+        "Set LEADLANE_CLOUD_WORKER=1 on the cloud runner (GitHub Actions sets this)."
+    )
+
+
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -65,15 +80,20 @@ def fresh_status(bot_id: int) -> str | None:
         return session.scalar(select(Bot.status).where(Bot.id == bot_id))
 
 
+def adapter_key_for_bot(bot: Bot) -> str:
+    selected = (bot.selected_worker or "").strip()
+    return selected or bot.source
+
+
 def resume_after_reset(db: Session, registry: Registry, now: datetime) -> int:
     bots = db.scalars(select(Bot).where(Bot.status == "limit_reached")).all()
     resumed = 0
     for bot in bots:
         try:
-            adapter = registry.get(bot.source)
+            adapter = registry.get(adapter_key_for_bot(bot))
         except KeyError:
             continue
-        window = ensure_window(db, bot.source, now, adapter.quota)
+        window = ensure_window(db, adapter.key, now, adapter.quota)
         if not has_capacity(window, adapter.quota, 1):
             continue
         bot.status = "running"
@@ -105,10 +125,18 @@ def tick(db: Session, settings: Settings, registry: Registry, now: datetime | No
     resume_after_reset(db, registry, now)
     bot = next_bot(db, now)
     if bot is None:
+        if cloud_collection_enabled():
+            from app.services.enrich import enrich_one
+
+            try:
+                if enrich_one(db, settings, now):
+                    return "enriched"
+            except Exception:
+                logger.exception("Enrichment step failed")
         return "idle"
 
     try:
-        adapter = registry.get(bot.source)
+        adapter = registry.get(adapter_key_for_bot(bot))
     except KeyError:
         bot.status = "error"
         bot.last_error = "Unknown data source."
@@ -128,7 +156,7 @@ def tick(db: Session, settings: Settings, registry: Registry, now: datetime | No
         return "error"
 
     quota = adapter.quota
-    window = ensure_window(db, bot.source, now, quota)
+    window = ensure_window(db, adapter.key, now, quota)
     ctx = FetchContext(
         location=bot.location,
         professions=list(bot.professions or []),

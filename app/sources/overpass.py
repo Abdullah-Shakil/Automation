@@ -16,6 +16,7 @@ from app.sources.base import (
     SourceQuota,
     TransientSourceError,
     http_headers,
+    is_nationwide,
 )
 
 
@@ -148,7 +149,8 @@ class OverpassAdapter(SourceAdapter):
         with self._session() as client:
             if "tiles" not in checkpoint:
                 south, north, west, east, display = self._geocode(ctx, client)
-                checkpoint["tiles"] = make_tiles(south, north, west, east)
+                max_tiles = 160 if is_nationwide(ctx.location) else 48
+                checkpoint["tiles"] = make_tiles(south, north, west, east, max_tiles=max_tiles)
                 checkpoint["place_name"] = display
                 checkpoint.setdefault("profession_index", 0)
                 checkpoint.setdefault("tag_index", 0)
