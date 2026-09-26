@@ -1,14 +1,21 @@
 {% extends "base.html" %}
-{% block title %}{{ bot.name or source_label(bot.source) }} · Leadlane{% endblock %}
+{% block title %}{% if bot %}{{ bot.name }}{% else %}Bot{% endif %} · Leadlane{% endblock %}
 {% block content %}
-<header class="page-head">
-  <div>
-    <p class="eyebrow"><a href="/?tab=bots">Bots</a></p>
-    <h1>{{ bot.name or source_label(bot.source) }}</h1>
-    <p class="lede">England · {{ source_label(bot.source) }} · {{ profession_list(bot) }}</p>
-  </div>
+<header class="view-head">
+  <p class="eyebrow"><a href="/?tab=bots">Bots</a></p>
+  <h2>{% if bot %}{{ bot.name }}{% else %}Bot{% endif %}</h2>
+  {% if bot %}
+  <p>Source key <code>{{ bot.key }}</code>. Start the matching worker (or any worker for Companies House / OSM / Wikidata) on the Workers tab.</p>
+  {% endif %}
 </header>
-<div data-poll="/partials/bots/{{ bot.id }}">
+{% if tab_error %}
+{% set error_title = "Internal error" %}
+{% set error_detail = tab_error %}
+{% set retry_href = request.url.path %}
+{% include "_tab_error.html" %}
+{% else %}
+<div data-poll="/partials/bots/{{ bot.key }}">
   {% include "_bot_live.html" %}
 </div>
+{% endif %}
 {% endblock %}

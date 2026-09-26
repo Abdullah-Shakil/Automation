@@ -1,110 +1,14 @@
+"""Ensure bot + worker rows exist. Trades come from app.trades (no professions table)."""
+
 from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Profession
-
-BUILTIN_PROFESSIONS: list[dict] = [
-    {
-        "slug": "plumber",
-        "label": "Plumbers",
-        "keywords": ["plumber", "plumbing"],
-        "sic_codes": ["43220"],
-        "osm_tags": [{"key": "craft", "value": "plumber"}],
-    },
-    {
-        "slug": "electrician",
-        "label": "Electricians",
-        "keywords": ["electrician", "electrical"],
-        "sic_codes": ["43210"],
-        "osm_tags": [{"key": "craft", "value": "electrician"}],
-    },
-    {
-        "slug": "gardener",
-        "label": "Gardeners",
-        "keywords": ["gardener", "landscaping"],
-        "sic_codes": ["81300"],
-        "osm_tags": [{"key": "craft", "value": "gardener"}],
-    },
-    {
-        "slug": "solicitor",
-        "label": "Solicitors",
-        "keywords": ["solicitor"],
-        "sic_codes": ["69102"],
-        "osm_tags": [{"key": "office", "value": "lawyer"}],
-    },
-    {
-        "slug": "painter",
-        "label": "Painters and decorators",
-        "keywords": ["painter", "decorator"],
-        "sic_codes": ["43341"],
-        "osm_tags": [{"key": "craft", "value": "painter"}],
-    },
-    {
-        "slug": "builder",
-        "label": "Builders",
-        "keywords": ["builder", "building"],
-        "sic_codes": ["41202"],
-        "osm_tags": [{"key": "craft", "value": "builder"}],
-    },
-    {
-        "slug": "roofer",
-        "label": "Roofers",
-        "keywords": ["roofer", "roofing"],
-        "sic_codes": ["43910"],
-        "osm_tags": [{"key": "craft", "value": "roofer"}],
-    },
-    {
-        "slug": "carpenter",
-        "label": "Carpenters and joiners",
-        "keywords": ["carpenter", "joiner"],
-        "sic_codes": ["43320"],
-        "osm_tags": [{"key": "craft", "value": "carpenter"}],
-    },
-    {
-        "slug": "plasterer",
-        "label": "Plasterers",
-        "keywords": ["plasterer"],
-        "sic_codes": ["43310"],
-        "osm_tags": [{"key": "craft", "value": "plasterer"}],
-    },
-    {
-        "slug": "locksmith",
-        "label": "Locksmiths",
-        "keywords": ["locksmith"],
-        "sic_codes": [],
-        "osm_tags": [{"key": "craft", "value": "locksmith"}],
-    },
-    {
-        "slug": "accountant",
-        "label": "Accountants",
-        "keywords": ["accountant", "accountancy"],
-        "sic_codes": ["69201"],
-        "osm_tags": [{"key": "office", "value": "accountant"}],
-    },
-    {
-        "slug": "cleaner",
-        "label": "Cleaners",
-        "keywords": ["cleaner", "cleaning"],
-        "sic_codes": ["81210"],
-        "osm_tags": [{"key": "craft", "value": "window_cleaner"}],
-    },
-    {
-        "slug": "estate-agent",
-        "label": "Estate agents",
-        "keywords": ["estate agent"],
-        "sic_codes": ["68310"],
-        "osm_tags": [{"key": "office", "value": "estate_agent"}],
-    },
-    {
-        "slug": "mechanic",
-        "label": "Vehicle mechanics",
-        "keywords": ["mechanic", "garage"],
-        "sic_codes": ["45200"],
-        "osm_tags": [{"key": "shop", "value": "car_repair"}],
-    },
-]
+from app.models import Bot, Worker
+from app.sources.base import SEARCH_LOCATION
+from app.sources.registry import default_registry
+from app.workers.registry import default_workers
 
 
 def _utcnow() -> datetime:
@@ -112,46 +16,73 @@ def _utcnow() -> datetime:
 
 
 def seed(db: Session) -> None:
-    existing = {row.slug: row for row in db.scalars(select(Profession)).all()}
+    """Create missing bots/workers for the current registries."""
+    ensure_bots(db)
+    ensure_workers(db)
+
+
+def ensure_bots(db: Session) -> None:
     now = _utcnow()
-    for item in BUILTIN_PROFESSIONS:
-        if item["slug"] in existing:
+    existing = {row.key: row for row in db.scalars(select(Bot)).all()}
+    collect_keys = {adapter.key for adapter in default_registry.all() if adapter.group == "collect"}
+    for key, row in list(existing.items()):
+        if key not in collect_keys:
+            db.delete(row)
+    for adapter in default_registry.all():
+        if adapter.group != "collect":
             continue
-        db.add(
-            Profession(
-                slug=item["slug"],
-                label=item["label"],
-                keywords=list(item["keywords"]),
-                sic_codes=list(item["sic_codes"]),
-                osm_tags=list(item["osm_tags"]),
-                is_builtin=True,
-                created_at=now,
-            )
-        )
-
-
-def restore_builtins(db: Session) -> int:
-    existing = {row.slug: row for row in db.scalars(select(Profession)).all()}
-    now = _utcnow()
-    added = 0
-    for item in BUILTIN_PROFESSIONS:
-        row = existing.get(item["slug"])
+        row = existing.get(adapter.key)
         if row is None:
             db.add(
-                Profession(
-                    slug=item["slug"],
-                    label=item["label"],
-                    keywords=list(item["keywords"]),
-                    sic_codes=list(item["sic_codes"]),
-                    osm_tags=list(item["osm_tags"]),
-                    is_builtin=True,
+                Bot(
+                    key=adapter.key,
+                    name=adapter.label,
+                    location=SEARCH_LOCATION,
+                    status="idle",
+                    checkpoint={},
+                    progress_note="Ready. Start a worker on the Workers tab to collect.",
+                    last_error="",
                     created_at=now,
+                    updated_at=now,
                 )
             )
-            added += 1
-        elif row.is_builtin:
-            row.label = item["label"]
-            row.keywords = list(item["keywords"])
-            row.sic_codes = list(item["sic_codes"])
-            row.osm_tags = list(item["osm_tags"])
-    return added
+        else:
+            row.name = adapter.label
+            if not (row.location or "").strip():
+                row.location = SEARCH_LOCATION
+            row.updated_at = now
+
+
+def ensure_workers(db: Session) -> None:
+    now = _utcnow()
+    existing = {row.key: row for row in db.scalars(select(Worker)).all()}
+    wanted = {w.key for w in default_workers.all() if w.can_collect}
+    for key, row in list(existing.items()):
+        if key not in wanted:
+            db.delete(row)
+    for worker in default_workers.all():
+        if not worker.can_collect:
+            continue
+        row = existing.get(worker.key)
+        if row is None:
+            db.add(
+                Worker(
+                    key=worker.key,
+                    name=worker.label,
+                    status="stopped",
+                    progress_note="Stopped. Start to let the cloud collector use this API.",
+                    last_error="",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        else:
+            row.name = worker.label
+            row.updated_at = now
+
+
+# Kept for older imports / scripts that called restore_builtins
+def restore_builtins(db: Session) -> int:
+    ensure_bots(db)
+    ensure_workers(db)
+    return 0

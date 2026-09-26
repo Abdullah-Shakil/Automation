@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en-GB">
+<html lang="en-GB" data-theme="day">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,46 +7,103 @@
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560;9..144,650&family=Outfit:wght@380;480;560&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/styles.css">
-</head>
-<body>
-  <div class="shell">
-    <aside class="sidebar">
-      <a class="brand" href="/">
-        <span class="mark" aria-hidden="true"></span>
-        <span>Leadlane</span>
-      </a>
-      <p class="brand-note">This PC shows the records. Collection runs in the cloud.</p>
-      <nav>
-        <a href="/?tab=workers" class="{% if active == 'dashboard' %}is-current{% endif %}">Workers</a>
-        <a href="/leads" class="{% if active == 'leads' %}is-current{% endif %}">Leads</a>
-        <a href="/professions" class="{% if active == 'professions' %}is-current{% endif %}">Professions</a>
-      </nav>
-    </aside>
-    <main>
-      {% if notice %}
-      <p class="flash flash-info" role="status">{{ notice }}</p>
-      {% endif %}
-      {% block content %}{% endblock %}
-      <footer>
-        Company records from Companies House under the Open Government Licence.
-        Map data © OpenStreetMap contributors, ODbL.
-      </footer>
-    </main>
-  </div>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css?v=schema14">
   <script>
     (function () {
-      const region = document.querySelector("[data-poll]");
+      try {
+        var saved = localStorage.getItem("leadlane-theme") || localStorage.getItem("find-theme");
+        var dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+        var theme = saved === "night" || saved === "day" ? saved : (dark ? "night" : "day");
+        document.documentElement.setAttribute("data-theme", theme);
+      } catch (e) {}
+    })();
+  </script>
+</head>
+<body>
+  <div class="atmosphere" aria-hidden="true">
+    <div class="atmosphere-grid"></div>
+    <div class="atmosphere-glow"></div>
+  </div>
+
+  <header class="top">
+    <a class="brand" href="/?tab=workers" aria-label="Leadlane home">
+      <span class="brand-mark">Leadlane</span>
+      <span class="brand-sub">UK</span>
+    </a>
+    <nav class="nav" aria-label="Primary">
+      <a href="/?tab=workers" class="{% if active == 'workers' %}is-current{% endif %}">Workers</a>
+      <a href="/?tab=bots" class="{% if active == 'bots' %}is-current{% endif %}">Bots</a>
+      <a href="/leads" class="{% if active == 'leads' %}is-current{% endif %}">Leads</a>
+    </nav>
+    <div class="top-actions">
+      <button type="button" id="theme-toggle" class="theme-btn" aria-label="Toggle day and night theme" title="Day / night">
+        <span class="theme-icon" aria-hidden="true"></span>
+        <span class="theme-label">Night</span>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    {% if notice %}
+    <p class="flash flash-info" role="status">{{ notice }}</p>
+    {% endif %}
+    {% if error %}
+    <p class="flash flash-error" role="alert">{{ error }}</p>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+
+  <div id="profile-overlay" class="profile-overlay" hidden aria-hidden="true">
+    <div class="profile-backdrop" data-close-profile></div>
+    <div class="profile-sheet" role="dialog" aria-modal="true" aria-labelledby="profile-title">
+      <div class="profile-chrome">
+        <div class="profile-nav">
+          <button type="button" id="profile-prev" class="chrome-btn" aria-label="Previous">‹ Prev</button>
+          <button type="button" id="profile-next" class="chrome-btn" aria-label="Next">Next ›</button>
+          <span id="profile-index" class="profile-index"></span>
+        </div>
+        <button type="button" id="profile-close" class="chrome-btn close" aria-label="Close profile">✕</button>
+      </div>
+      <div id="profile-body" class="profile-body"></div>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <span>Six tables · workers start collection · GitHub / cron runs the cloud worker</span>
+  </footer>
+
+  <script src="/static/app.js?v=schema9"></script>
+  <script>
+    (function () {
+      var region = document.querySelector("[data-poll]");
       if (!region) return;
-      const url = region.getAttribute("data-poll");
+      var url = region.getAttribute("data-poll");
       async function refresh() {
         try {
-          const response = await fetch(url, { headers: { "Accept": "text/html" } });
-          if (!response.ok) return;
-          region.innerHTML = await response.text();
+          if (window.Leadlane && typeof window.Leadlane.shouldSkipPoll === "function" && window.Leadlane.shouldSkipPoll()) {
+            return;
+          }
+          var preserved = window.Leadlane && typeof window.Leadlane.capturePreserveState === "function"
+            ? window.Leadlane.capturePreserveState()
+            : null;
+          var response = await fetch(url, { headers: { "Accept": "text/html" } });
+          var html = await response.text();
+          if (!response.ok) {
+            region.innerHTML = html && html.trim()
+              ? html
+              : '<section class="panel tab-error" role="alert"><h2 class="section-title">Could not refresh</h2><p class="flash flash-error">This tab failed to refresh. Other tabs should still work.</p></section>';
+            return;
+          }
+          region.innerHTML = html;
+          if (window.Leadlane && typeof window.Leadlane.afterPoll === "function") {
+            window.Leadlane.afterPoll(preserved);
+          }
         } catch (error) {
-          /* Leave the last good markup in place. */
+          if (window.Leadlane && typeof window.Leadlane.shouldSkipPoll === "function" && window.Leadlane.shouldSkipPoll()) {
+            return;
+          }
+          region.innerHTML = '<section class="panel tab-error" role="alert"><h2 class="section-title">Could not refresh</h2><p class="flash flash-error">Check the connection, then try another tab or reload.</p></section>';
         }
       }
       setInterval(refresh, 4000);

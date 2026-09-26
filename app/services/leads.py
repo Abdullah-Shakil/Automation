@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.models import Lead, LeadSighting
+from app.models import Lead
 
 
 @dataclass
@@ -37,15 +37,8 @@ def apply_filters(stmt: Select, filters: LeadFilters) -> Select:
                 Lead.mobile.ilike(like),
                 Lead.trading_name.ilike(like),
                 Lead.company_number.ilike(like),
-                Lead.company_type.ilike(like),
-                Lead.company_status.ilike(like),
-                Lead.category.ilike(like),
-                Lead.sic_codes.ilike(like),
                 Lead.town.ilike(like),
-                Lead.county.ilike(like),
-                Lead.address_line1.ilike(like),
                 Lead.officers.ilike(like),
-                Lead.social_links.ilike(like),
             )
         )
     if filters.company_number:
@@ -59,9 +52,7 @@ def apply_filters(stmt: Select, filters: LeadFilters) -> Select:
     if filters.profession:
         stmt = stmt.where(Lead.profession == filters.profession)
     if filters.source:
-        stmt = stmt.where(
-            Lead.id.in_(select(LeadSighting.lead_id).where(LeadSighting.source == filters.source))
-        )
+        stmt = stmt.where(Lead.primary_source == filters.source)
     if filters.has_email:
         stmt = stmt.where(Lead.email.is_not(None), Lead.email != "")
     if filters.has_phone:
@@ -79,8 +70,11 @@ def apply_filters(stmt: Select, filters: LeadFilters) -> Select:
 def search_leads(db: Session, filters: LeadFilters) -> tuple[list[Lead], int]:
     count_stmt = apply_filters(select(func.count()).select_from(Lead), filters)
     total = int(db.scalar(count_stmt) or 0)
-    pages = max(1, (total + filters.per_page - 1) // filters.per_page)
-    page = min(max(filters.page, 1), pages)
-    stmt = apply_filters(select(Lead), filters).order_by(Lead.date_found.desc(), Lead.id.desc())
-    rows = db.scalars(stmt.offset((page - 1) * filters.per_page).limit(filters.per_page)).all()
-    return list(rows), total
+    page = max(filters.page, 1)
+    stmt = (
+        apply_filters(select(Lead), filters)
+        .order_by(Lead.date_found.desc(), Lead.id.desc())
+        .offset((page - 1) * filters.per_page)
+        .limit(filters.per_page)
+    )
+    return list(db.scalars(stmt).all()), total

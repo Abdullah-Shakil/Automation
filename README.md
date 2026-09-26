@@ -1,8 +1,10 @@
 # Leadlane
 
-Leadlane stores UK company records for trades you choose: plumbers, gardeners, solicitors, electricians, painters, and any profession you add. Each **bot** is one source collecting those professions across England. A bot runs until that source's free quota is used, then pauses and continues when the quota resets.
+Leadlane stores UK company records for five fixed trades: **Electricians, Gardeners, Painters, Plumbers, Solicitors**. Six shared tables hold everything: **bots**, **workers**, **logs**, **leads**, **usage**, **settings**.
 
-The dashboard runs on your Windows PC and does not ask you to sign in. It only reads and writes the shared database (start, stop, settings). It does not collect. Collection runs in the cloud, on GitHub Actions, so it continues with the PC off. Records stay in the database. There is no email drafting and no CSV export.
+**Workers** (Serper / Tavily / SerpApi) are started and stopped on the Workers tab. **Bots** are usage meters for each data source — no start/stop there. When GitHub Actions or cron-job.org runs the cloud collector (`LEADLANE_CLOUD_WORKER=1`), each started worker walks the bot list, skips sources with no free quota left, and continues until every eligible bot (or that worker) is exhausted.
+
+The dashboard runs on your Windows PC and does not ask you to sign in. It only reads and writes the shared database. It does not collect. Collection runs in the cloud so it continues with the PC off. Records stay in the database. There is no email drafting and no CSV export.
 
 Do not expose the dashboard on the public internet. There is no login.
 
@@ -19,7 +21,7 @@ mkdir data
 .venv\Scripts\uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Open http://127.0.0.1:8000. Start and stop bots there. That only changes flags in the database. Nothing is collected until a cloud scheduler below is turned on.
+Open http://127.0.0.1:8000. Start and stop **workers** there. That only changes flags in the database. Nothing is collected until a cloud scheduler below is turned on and at least one worker is started.
 
 Tests:
 
@@ -64,9 +66,9 @@ These are not used, because they are not a free always-on worker: Render, Railwa
 
 1. Push the repo.
 2. Add the secrets listed at the bottom.
-3. Settings → Secrets and variables → Actions → Variables → `ENABLE_SCHEDULE` = `true`.
-4. In `.env` on the PC set `LEADLANE_GITHUB_SCHEDULE=true` and restart the dashboard. Workers → Use this.
-5. Actions → Collect → Run workflow once, then close the PC.
+3. Settings → Secrets and variables → Actions → Variables → `ENABLE_SCHEDULE` = `true`. Optional: `TRADE_PRESET` = `all` or one of `electrician`, `gardener`, `painter`, `plumber`, `solicitor` (used by the schedule and as the dispatch default when the dashboard has not set a Find choice).
+4. In `.env` on the PC set `LEADLANE_GITHUB_SCHEDULE=true` and restart the dashboard. Workers → Use this. Set **Find** to All or one trade.
+5. Actions → Collect → Run workflow once (pick the trade in the input if you want), then close the PC.
 
 Until `ENABLE_SCHEDULE` is `true`, the 3-hour schedule is skipped. Run workflow still works.
 
@@ -79,7 +81,8 @@ Free HTTPS cron (https://cron-job.org/en/). Use this when you do not want GitHub
    - URL: `https://api.github.com/repos/OWNER/REPO/actions/workflows/collect.yml/dispatches`
    - Method: POST
    - Headers: `Accept: application/vnd.github+json`, `Authorization: Bearer YOUR_TOKEN`, `Content-Type: application/json`, `X-GitHub-Api-Version: 2022-11-28`
-   - Body: `{"ref":"main"}` (the branch that contains this workflow)
+   - Body (All trades): `{"ref":"main","inputs":{"trade_preset":"all"}}`
+   - Or one trade, e.g. plumbers: `{"ref":"main","inputs":{"trade_preset":"plumber"}}`
 3. The token lives in cron-job.org, not in Leadlane.
 4. Set `LEADLANE_CRONJOB_ORG=true` in `.env` and choose it on the Workers tab.
 
@@ -185,6 +188,6 @@ Put source keys in `.env` on the PC (so the dashboard can show Connected) and th
 
 **Serper / Tavily / SerpApi.** Web search APIs with free signup keys. Each step searches for a trade in England and stores organic result titles, URLs, and snippets. Nothing is invented.
 
-## Professions
+## Trades
 
-Built in: plumbers, electricians, gardeners, solicitors, painters and decorators, builders, roofers, carpenters, plasterers, locksmiths, accountants, cleaners, estate agents, and vehicle mechanics. Add another from the Professions page with keywords, optional SIC codes, and optional OpenStreetMap tags (`craft=glazier`). A running bot keeps the copy of the profession it started with.
+Fixed Find presets: Electricians, Gardeners, Painters, Plumbers, Solicitors (or All). Choose on the Workers tab — stored in `settings` and read by GitHub Actions / cron via `TRADE_PRESET` when provided.

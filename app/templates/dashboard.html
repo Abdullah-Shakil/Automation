@@ -1,18 +1,23 @@
 {% extends "base.html" %}
 {% block title %}{{ tab|capitalize }} · Leadlane{% endblock %}
 {% block content %}
-<header class="page-head">
-  <div>
-    <p class="eyebrow">Dashboard</p>
-    <h1>Workers and bots</h1>
-  </div>
+<header class="view-head">
+  {% if tab == "workers" %}
+  <h2>Workers</h2>
+  <p>Start a collect worker here. GitHub Actions / cron then cycles bots that still have free quota until every bot (or this worker) is exhausted.{% if trade_label %} Finding: <strong>{{ trade_label }}</strong>.{% endif %}</p>
+  {% else %}
+  <h2>Bots</h2>
+  <p>One row per data source. Usage meters only — start and stop live on the Workers tab. Cloud runs the next bot with quota left.</p>
+  {% endif %}
 </header>
-<p class="lede">This PC only reads and writes the shared database: start, stop, and settings. Collection runs in the cloud, with this PC off. Every scheduler below stays off until you add its switch.</p>
-<nav class="tabs" aria-label="Dashboard">
-  <a href="/?tab=workers" class="{% if tab == 'workers' %}is-current{% endif %}">Workers</a>
-  <a href="/?tab=bots" class="{% if tab == 'bots' %}is-current{% endif %}">Bots</a>
-</nav>
 <div data-poll="/partials/dashboard?tab={{ tab }}">
+  {% if tab_error %}
+  {% set error_title = "Internal error" %}
+  {% set error_detail = tab_error %}
+  {% set retry_href = "/?tab=" ~ tab %}
+  {% include "_tab_error.html" %}
+  {% else %}
   {% include "_dashboard_tab.html" %}
+  {% endif %}
 </div>
 {% endblock %}

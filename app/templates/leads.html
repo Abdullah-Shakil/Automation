@@ -1,123 +1,70 @@
 {% extends "base.html" %}
 {% block title %}Leads · Leadlane{% endblock %}
 {% block content %}
-<header class="page-head">
-  <div>
-    <p class="eyebrow">Leads</p>
-    <h1>Companies stored so far</h1>
-  </div>
+<header class="view-head">
+  <h2>Leads</h2>
+  <p>Every company in the shared database. Contact fields fill from Places results and from each company's own website. Website is last. Sort any column.</p>
 </header>
-<form method="get" action="/leads" class="filters">
-  <label>
-    <span>Search</span>
-    <input name="q" value="{{ filters.q }}" placeholder="Name, number, town, SIC, phone, officer">
-  </label>
-  <label>
-    <span>Profession</span>
-    <select name="profession">
-      <option value="">Any</option>
-      {% for profession in professions %}
-      <option value="{{ profession }}" {% if filters.profession == profession %}selected{% endif %}>{{ profession }}</option>
-      {% endfor %}
-    </select>
-  </label>
-  <label>
-    <span>Source</span>
-    <select name="source">
-      <option value="">Any</option>
-      {% for source in sources %}
-      <option value="{{ source }}" {% if filters.source == source %}selected{% endif %}>{{ source_label(source) }}</option>
-      {% endfor %}
-    </select>
-  </label>
-  <label class="check">
-    <input type="checkbox" name="has_email" value="1" {% if filters.has_email %}checked{% endif %}>
-    <span>Has email</span>
-  </label>
-  <label>
-    <span>Company number</span>
-    <input name="company_number" value="{{ filters.company_number }}" maxlength="32">
-  </label>
-  <label>
-    <span>Town</span>
-    <input name="town" value="{{ filters.town }}" maxlength="80">
-  </label>
-  <label>
-    <span>Status</span>
-    <input name="status" value="{{ filters.status }}" maxlength="40" placeholder="active">
-  </label>
-  <label>
-    <span>SIC</span>
-    <input name="sic" value="{{ filters.sic }}" maxlength="12" placeholder="43220">
-  </label>
-  <label class="check">
-    <input type="checkbox" name="has_phone" value="1" {% if filters.has_phone %}checked{% endif %}>
-    <span>Has phone</span>
-  </label>
-  <label class="check">
-    <input type="checkbox" name="has_mobile" value="1" {% if filters.has_mobile %}checked{% endif %}>
-    <span>Has mobile</span>
-  </label>
-  <button type="submit">Filter</button>
-</form>
+{% if tab_error %}
+{% set error_title = "Internal error" %}
+{% set error_detail = tab_error %}
+{% set retry_href = "/leads" %}
+{% include "_tab_error.html" %}
+{% else %}
 <p class="count">{{ total }} compan{{ "y" if total == 1 else "ies" }}</p>
 {% if leads %}
 <div class="table-wrap">
-  <table>
+  <table class="leads-table sortable-table" data-table="leads">
     <thead>
       <tr>
-        <th>Business</th>
-        <th>Number</th>
-        <th>Town</th>
-        <th>Profession</th>
-        <th>Description</th>
-        <th>Address</th>
-        <th>Landline</th>
-        <th>Mobile</th>
-        <th>Website</th>
-        <th>Email</th>
-        <th>Source</th>
-        <th>Found</th>
+        <th><button type="button" class="th-sort is-active" data-sort="name" data-dir="asc">Name <span class="sort-ind" aria-hidden="true">↑</span></button></th>
+        <th><button type="button" class="th-sort" data-sort="email">Email <span class="sort-ind" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="th-sort" data-sort="phone">Phone <span class="sort-ind" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="th-sort" data-sort="mobile">Mobile <span class="sort-ind" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="th-sort" data-sort="address">Address <span class="sort-ind" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="th-sort" data-sort="town">Town <span class="sort-ind" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="th-sort" data-sort="profession">Profession <span class="sort-ind" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="th-sort" data-sort="description">Description <span class="sort-ind" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="th-sort" data-sort="source">Source <span class="sort-ind" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="th-sort" data-sort="found" data-dir="desc">Found <span class="sort-ind" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="th-sort" data-sort="website">Website <span class="sort-ind" aria-hidden="true"></span></button></th>
       </tr>
     </thead>
     <tbody>
       {% for lead in leads %}
-      <tr>
-        <td><a href="/leads/{{ lead.id }}">{{ lead.business_name }}</a></td>
-        <td>{{ lead.company_number or "—" }}</td>
+      <tr data-sort-name="{{ lead.business_name }}"
+          data-sort-email="{{ lead.email or '' }}"
+          data-sort-phone="{{ lead.phone or '' }}"
+          data-sort-mobile="{{ lead.mobile or '' }}"
+          data-sort-address="{{ lead.address or '' }}"
+          data-sort-town="{{ lead.town or '' }}"
+          data-sort-profession="{{ lead.category or lead.profession or '' }}"
+          data-sort-description="{{ lead.description or '' }}"
+          data-sort-source="{{ lead.sources or lead.primary_source }}"
+          data-sort-found="{{ lead.date_found.isoformat() if lead.date_found else '' }}"
+          data-sort-website="{{ lead.website or '' }}">
+        <td><a class="bot-name" href="/leads/{{ lead.id }}">{{ lead.business_name }}</a></td>
+        <td>{{ lead.email or "—" }}</td>
+        <td>{{ lead.phone or "—" }}</td>
+        <td>{{ lead.mobile or "—" }}</td>
+        <td>{{ lead.address or "—" }}</td>
         <td>{{ lead.town or "—" }}</td>
         <td>{{ lead.category or lead.profession }}</td>
         <td>{{ lead.description or "—" }}</td>
-        <td>{{ lead.address or "—" }}</td>
-        <td>{{ lead.phone or "—" }}</td>
-        <td>{{ lead.mobile or "—" }}</td>
+        <td>{{ source_label(lead.primary_source) }}{% if lead.sources and lead.sources != lead.primary_source %} · {{ lead.sources }}{% endif %}</td>
+        <td>{{ format_dt(lead.date_found) }}</td>
         <td>
           {% if lead.website %}
           <a href="{{ lead.website }}" rel="noreferrer">{{ lead.website }}</a>
           {% else %}—{% endif %}
         </td>
-        <td>{{ lead.email or "—" }}</td>
-        <td>
-          {% if lead.primary_source_url %}
-          <a href="{{ lead.primary_source_url }}" rel="noreferrer">{{ lead.sources or source_label(lead.primary_source) }}</a>
-          {% else %}
-          {{ lead.sources or source_label(lead.primary_source) }}
-          {% endif %}
-        </td>
-        <td>{{ format_dt(lead.date_found) }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
-{% if pages > 1 %}
-<nav class="pager" aria-label="Pages">
-  {% for number in range(1, pages + 1) %}
-  <a href="/leads?{{ query_base }}{% if query_base %}&{% endif %}page={{ number }}" class="{% if number == page %}is-current{% endif %}">{{ number }}</a>
-  {% endfor %}
-</nav>
-{% endif %}
 {% else %}
-<p class="empty">No companies match. Add a bot, or loosen the filter.</p>
+<p class="empty">No companies in the database yet. Start a worker on the Workers tab after a cloud scheduler is on.</p>
+{% endif %}
 {% endif %}
 {% endblock %}

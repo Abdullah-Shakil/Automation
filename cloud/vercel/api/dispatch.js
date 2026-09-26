@@ -16,6 +16,7 @@ export default async function handler(req, res) {
     res.status(200).json({ ok: false, detail: "Off until GH_DISPATCH_TOKEN and GH_REPO are set." });
     return;
   }
+  const trade = (process.env.TRADE_PRESET || "all").trim() || "all";
   const response = await fetch(
     `https://api.github.com/repos/${repo}/actions/workflows/collect.yml/dispatches`,
     {
@@ -27,7 +28,7 @@ export default async function handler(req, res) {
         "User-Agent": "Leadlane-vercel-trigger",
         "X-GitHub-Api-Version": "2022-11-28",
       },
-      body: JSON.stringify({ ref }),
+      body: JSON.stringify({ ref, inputs: { trade_preset: trade } }),
     },
   );
   res.status(200).json({ ok: response.ok, status: response.status });

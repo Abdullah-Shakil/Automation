@@ -4,7 +4,7 @@ from sqlalchemy import func, select
 
 from app.config import get_settings
 from app.db import session_scope
-from app.models import Bot, Lead, UsageWindow, WorkerHeartbeat
+from app.models import AppSetting, Bot, Lead, UsageWindow, Worker
 from app.services.runner import tick
 from app.services.usage import ensure_window, has_capacity, window_bounds, window_key
 from app.sources.base import FatalSourceError, FetchResult, RawLead, SourceQuota, TransientSourceError
@@ -59,17 +59,45 @@ def _registry(*adapters):
     return registry
 
 
-def _bot(db, **kwargs):
+def _worker(db, key="serper", status="running", **kwargs):
     now = kwargs.get("created_at", datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc))
+    row = db.scalars(select(Worker).where(Worker.key == key)).first()
+    if row is None:
+        row = Worker(
+            key=key,
+            name=key.title(),
+            status=status,
+            progress_note="",
+            last_error="",
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(row)
+    else:
+        row.status = status
+        row.updated_at = now
+    db.flush()
+    return row
+
+
+def _clear_seeded_bots(db):
+    for row in list(db.scalars(select(Bot)).all()):
+        db.delete(row)
+    db.flush()
+
+
+def _bot(db, **kwargs):
+    if kwargs.pop("clear", True):
+        _clear_seeded_bots(db)
+    now = kwargs.get("created_at", datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc))
+    key = kwargs.get("key", kwargs.get("source", "scripted"))
     bot = Bot(
+        key=key,
         name=kwargs.get("name", "Test bot"),
-        location=kwargs.get("location", "Hackney, London"),
-        source=kwargs.get("source", "scripted"),
-        status=kwargs.get("status", "running"),
-        professions=[{"slug": "plumber", "label": "Plumbers", "keywords": ["plumber"], "sic_codes": ["43220"], "osm_tags": []}],
+        location=kwargs.get("location", "England"),
+        status=kwargs.get("status", "idle"),
         checkpoint=kwargs.get("checkpoint", {}),
         progress_note="",
-        selected_worker=kwargs.get("selected_worker", ""),
         last_error="",
         leads_found=0,
         duplicates_found=0,
@@ -133,13 +161,14 @@ def test_bot_step_stores_a_lead_and_survives_a_new_session():
     adapter = ScriptedAdapter([_page([_lead(description="Boiler repairs")], done=False, checkpoint={"page": 2})])
     now = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
     with session_scope() as db:
+        _worker(db)
         bot = _bot(db)
         action = tick(db, _settings(), _registry(adapter), now=now)
         assert action == "stepped"
         bot_id = bot.id
     with session_scope() as db:
         bot = db.get(Bot, bot_id)
-        assert bot.status == "running"
+        assert bot.status == "idle"
         assert bot.checkpoint == {"page": 2}
         assert bot.leads_found == 1
         assert bot.duplicates_found == 0
@@ -147,31 +176,23 @@ def test_bot_step_stores_a_lead_and_survives_a_new_session():
         assert bot.steps_succeeded == 1
         lead = db.scalar(select(Lead))
         assert lead.description == "Boiler repairs"
-        assert lead.first_bot_id == bot_id
+        assert lead.first_bot_key == "scripted"
         usage = db.scalar(select(UsageWindow).where(UsageWindow.source == "scripted"))
         assert usage.requests_used == 1
-        assert db.get(WorkerHeartbeat, 1) is not None
+        assert db.get(AppSetting, "heartbeat_at") is not None
 
 
-def test_stop_prevents_further_collection():
+def test_no_running_worker_means_idle():
     adapter = ScriptedAdapter([_page([_lead()])])
     now = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
     with session_scope() as db:
-        _bot(db, status="stopped")
+        _worker(db, status="stopped")
+        _bot(db)
         assert tick(db, _settings(), _registry(adapter), now=now) == "idle"
     assert adapter.calls == 0
 
 
-def test_pause_is_not_collected_until_started():
-    adapter = ScriptedAdapter([_page([_lead()])])
-    now = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
-    with session_scope() as db:
-        _bot(db, status="paused")
-        assert tick(db, _settings(), _registry(adapter), now=now) == "idle"
-    assert adapter.calls == 0
-
-
-def test_daily_request_limit_pauses_and_resumes_next_uk_day():
+def test_daily_request_limit_skips_bot_and_resumes_next_uk_day():
     adapter = ScriptedAdapter(
         [
             _page([_lead("One Ltd", "1")], checkpoint={"page": 1}),
@@ -183,12 +204,14 @@ def test_daily_request_limit_pauses_and_resumes_next_uk_day():
     later_same_day = day_one + timedelta(hours=3)
     next_day = datetime(2026, 1, 16, 8, 0, tzinfo=timezone.utc)
     with session_scope() as db:
+        _worker(db)
         bot = _bot(db)
         assert tick(db, _settings(), _registry(adapter), now=day_one) == "stepped"
         db.refresh(bot)
         assert bot.status == "limit_reached"
         assert adapter.calls == 1
-        assert tick(db, _settings(), _registry(adapter), now=later_same_day) == "idle"
+        # Same day: no eligible bots → worker parks
+        assert tick(db, _settings(), _registry(adapter), now=later_same_day) == "exhausted"
         assert adapter.calls == 1
         assert tick(db, _settings(), _registry(adapter), now=next_day) == "stepped"
         db.refresh(bot)
@@ -209,11 +232,12 @@ def test_five_minute_quota_resumes_in_the_next_utc_block():
     still = datetime(2026, 1, 15, 12, 4, tzinfo=timezone.utc)
     nxt = datetime(2026, 1, 15, 12, 5, tzinfo=timezone.utc)
     with session_scope() as db:
+        _worker(db)
         bot = _bot(db)
         assert tick(db, _settings(), _registry(adapter), now=first) == "stepped"
         db.refresh(bot)
         assert bot.status == "limit_reached"
-        assert tick(db, _settings(), _registry(adapter), now=still) == "idle"
+        assert tick(db, _settings(), _registry(adapter), now=still) == "exhausted"
         assert tick(db, _settings(), _registry(adapter), now=nxt) == "stepped"
         db.refresh(bot)
         assert bot.status == "completed"
@@ -229,18 +253,18 @@ def test_quota_is_shared_across_bots_on_the_same_source():
     )
     now = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
     with session_scope() as db:
-        first = _bot(db, updated_at=now)
-        second = _bot(db, updated_at=now + timedelta(seconds=1))
+        _worker(db)
+        first = _bot(db, key="scripted", updated_at=now)
+        # Second bot same key is unusual; use same adapter key via second row with same key would violate unique.
+        # Instead verify second STEP on same bot is blocked — and a different key still works in next test.
         assert tick(db, _settings(), _registry(adapter), now=now) == "stepped"
         db.refresh(first)
         assert first.status == "limit_reached"
-        assert tick(db, _settings(), _registry(adapter), now=now + timedelta(minutes=1)) == "limited"
-        db.refresh(second)
-        assert second.status == "limit_reached"
+        assert tick(db, _settings(), _registry(adapter), now=now + timedelta(minutes=1)) == "exhausted"
         assert adapter.calls == 1
 
 
-def test_a_different_source_is_not_blocked_by_another_quota():
+def test_worker_cycles_to_next_bot_when_one_is_limited():
     limited = ScriptedAdapter(
         [_page([_lead("One Ltd", "1")])],
         quota=SourceQuota(requests=1, period="day", timezone="Europe/London", title="1 / day", detail=""),
@@ -252,13 +276,16 @@ def test_a_different_source_is_not_blocked_by_another_quota():
     other.key = "other"
     now = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
     with session_scope() as db:
-        _bot(db, source="scripted", updated_at=now)
-        second = _bot(db, source="other", updated_at=now + timedelta(seconds=1))
+        _worker(db)
+        _bot(db, key="scripted", updated_at=now)
+        second = _bot(db, key="other", updated_at=now + timedelta(seconds=1), clear=False)
         tick(db, _settings(), _registry(limited, other), now=now)
         assert tick(db, _settings(), _registry(limited, other), now=now + timedelta(minutes=1)) == "stepped"
         db.refresh(second)
         assert second.status == "completed"
         assert other.calls == 1
+        worker = db.scalars(select(Worker).where(Worker.key == "serper")).first()
+        assert worker.status == "running"
 
 
 def test_duplicate_sighting_is_counted_separately_from_new_leads():
@@ -270,6 +297,7 @@ def test_duplicate_sighting_is_counted_separately_from_new_leads():
     )
     now = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
     with session_scope() as db:
+        _worker(db)
         bot = _bot(db)
         tick(db, _settings(), _registry(adapter), now=now)
         tick(db, _settings(), _registry(adapter), now=now + timedelta(minutes=1))
@@ -279,24 +307,25 @@ def test_duplicate_sighting_is_counted_separately_from_new_leads():
         assert db.scalar(select(func.count()).select_from(Lead)) == 1
 
 
-def test_stop_during_request_is_kept_and_the_lead_is_still_stored():
+def test_stop_worker_during_request_keeps_the_lead():
     class Stopper(ScriptedAdapter):
         def fetch(self, ctx):
             self.calls += 1
             with session_scope() as other:
-                row = other.scalar(select(Bot))
+                row = other.scalars(select(Worker).where(Worker.key == "serper")).first()
                 row.status = "stopped"
             return _page([_lead()], checkpoint={"page": 4})
 
     adapter = Stopper([])
     now = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
     with session_scope() as db:
+        _worker(db)
         bot = _bot(db)
-        tick(db, _settings(), _registry(adapter), now=now)
+        assert tick(db, _settings(), _registry(adapter), now=now) == "stopped"
         bot_id = bot.id
     with session_scope() as db:
         bot = db.get(Bot, bot_id)
-        assert bot.status == "stopped"
+        assert bot.status == "idle"
         assert bot.checkpoint == {"page": 4}
         assert db.scalar(select(func.count()).select_from(Lead)) == 1
 
@@ -306,10 +335,11 @@ def test_backoff_then_error_after_repeated_failures():
     settings = _settings(max_consecutive_errors=3)
     now = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
     with session_scope() as db:
+        _worker(db)
         bot = _bot(db)
         assert tick(db, settings, _registry(adapter), now=now) == "backoff"
         db.refresh(bot)
-        assert bot.status == "running"
+        assert bot.status == "idle"
         assert bot.next_run_at is not None
         assert bot.steps_failed == 1
         assert tick(db, settings, _registry(adapter), now=now + timedelta(seconds=5)) == "idle"
@@ -319,10 +349,11 @@ def test_backoff_then_error_after_repeated_failures():
         assert bot.status == "error"
 
 
-def test_fatal_source_error_stops_the_bot():
+def test_fatal_source_error_marks_the_bot():
     adapter = ScriptedAdapter([FatalSourceError("robots.txt disallows this URL")])
     now = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
     with session_scope() as db:
+        _worker(db)
         bot = _bot(db)
         assert tick(db, _settings(), _registry(adapter), now=now) == "error"
         db.refresh(bot)
@@ -334,17 +365,21 @@ def test_completed_bot_is_left_alone():
     adapter = ScriptedAdapter([_page([], done=True)])
     now = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
     with session_scope() as db:
+        _worker(db)
         bot = _bot(db)
         tick(db, _settings(), _registry(adapter), now=now)
         db.refresh(bot)
         assert bot.status == "completed"
-        assert tick(db, _settings(), _registry(adapter), now=now) == "idle"
+        # Only completed bot → exhausted (no eligible work)
+        assert tick(db, _settings(), _registry(adapter), now=now) == "exhausted"
         assert adapter.calls == 1
 
 
 def test_has_capacity_treats_the_cap_as_inclusive_until_it_is_reached():
     quota = SourceQuota(requests=2, period="day", timezone="Europe/London", title="", detail="")
-    window = UsageWindow(source="scripted", window_key="x", window_start=datetime(2026, 1, 15, tzinfo=timezone.utc), requests_used=1)
+    window = UsageWindow(
+        source="scripted", window_key="x", window_start=datetime(2026, 1, 15, tzinfo=timezone.utc), requests_used=1
+    )
     assert has_capacity(window, quota, 1) is True
     window.requests_used = 2
     assert has_capacity(window, quota, 1) is False
@@ -359,3 +394,17 @@ def test_ensure_window_is_stable_within_a_day_and_changes_after_midnight():
         assert first.id == second.id
         later = ensure_window(db, "scripted", now + timedelta(days=1), quota)
         assert later.id != first.id
+
+
+def test_search_worker_bot_only_runs_when_that_worker_is_started():
+    adapter = ScriptedAdapter([_page([_lead()], done=True)])
+    adapter.key = "serper"
+    now = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
+    with session_scope() as db:
+        _worker(db, key="tavily", status="running")
+        _bot(db, key="serper")
+        assert tick(db, _settings(), _registry(adapter), now=now) == "idle"
+        assert adapter.calls == 0
+        _worker(db, key="serper", status="running")
+        assert tick(db, _settings(), _registry(adapter), now=now) == "stepped"
+        assert adapter.calls == 1

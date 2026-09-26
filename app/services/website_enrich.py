@@ -8,6 +8,7 @@ from urllib.robotparser import RobotFileParser
 from bs4 import BeautifulSoup
 
 from app.normalize import clean_email, clean_website, extract_postcode, split_uk_phones
+from app.services.contacts import contacts_from_text
 
 _SOCIAL_HOSTS = (
     "facebook.com",
@@ -80,6 +81,14 @@ def parse_company_site(html: str, page_url: str) -> dict:
 
     landline, mobile = split_uk_phones(*phones)
     email = next((item for item in emails if item), None)
+    # Also scan visible text — many trade sites put numbers in paragraphs, not tel: links.
+    text_contacts = contacts_from_text(soup.get_text(" ", strip=True))
+    if not landline and text_contacts.get("phone"):
+        landline = text_contacts["phone"]
+    if not mobile and text_contacts.get("mobile"):
+        mobile = text_contacts["mobile"]
+    if not email and text_contacts.get("email"):
+        email = text_contacts["email"]
     postcode = address_bits.get("postcode") or extract_postcode(" ".join(filter(None, address_bits.values())))
     return {
         "landline": landline,

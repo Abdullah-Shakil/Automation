@@ -151,3 +151,23 @@ def set_selected_runner(db, key: str) -> None:
         db.add(AppSetting(key="cloud_runner", value=key))
     else:
         row.value = key
+
+
+def get_trade_preset(db) -> str:
+    """'' = all five trades; otherwise one of plumber/electrician/painter/gardener/solicitor."""
+    from app.trades import normalize_preset
+
+    row = db.get(AppSetting, "trade_preset")
+    return normalize_preset(row.value if row else "")
+
+
+def set_trade_preset(db, preset: str) -> str:
+    from app.trades import normalize_preset
+
+    value = normalize_preset(preset)
+    row = db.get(AppSetting, "trade_preset")
+    if row is None:
+        db.add(AppSetting(key="trade_preset", value=value))
+    else:
+        row.value = value
+    return value

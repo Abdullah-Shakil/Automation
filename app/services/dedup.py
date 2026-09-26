@@ -1,9 +1,11 @@
+"""Upsert leads into the single leads table (identity_keys + sightings as JSON)."""
+
 from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Lead, LeadIdentity, LeadSighting
+from app.models import Lead
 from app.normalize import (
     clean_email,
     clean_website,
@@ -11,7 +13,6 @@ from app.normalize import (
     extract_postcode,
     norm_domain,
     norm_name,
-    norm_phone,
     norm_postcode,
     split_uk_phones,
 )
@@ -41,13 +42,19 @@ def identity_keys(raw: RawLead) -> list[str]:
     return keys
 
 
-def upsert_lead(db: Session, raw: RawLead, bot_id: int | None, now: datetime) -> str:
+def upsert_lead(db: Session, raw: RawLead, bot_key: str | None, now: datetime) -> str:
     name = clip(raw.business_name, 300)
     if not name:
         return "skipped"
     keys = identity_keys(raw)
     landline, mobile = split_uk_phones(raw.phone, raw.mobile)
     existing = _find(db, keys)
+    sighting = {
+        "source": raw.source,
+        "source_url": clip(raw.source_url, 500),
+        "external_id": clip(raw.external_id, 200),
+        "found_at": now.isoformat(),
+    }
     if existing is None:
         lead = Lead(
             business_name=name,
@@ -62,31 +69,57 @@ def upsert_lead(db: Session, raw: RawLead, bot_id: int | None, now: datetime) ->
             primary_source_url=clip(raw.source_url, 500),
             sources=raw.source,
             source_urls=clip(raw.source_url, 2000),
+            identity_keys=list(keys),
+            sightings=[sighting],
             date_found=now,
             updated_at=now,
-            first_bot_id=bot_id,
+            first_bot_key=bot_key,
         )
         _apply_details(lead, raw, landline, mobile)
         db.add(lead)
         db.flush()
-        for key in keys:
-            db.add(LeadIdentity(lead_id=lead.id, value=key[:400]))
-        _add_sighting(db, lead.id, raw, now)
         return "created"
 
     _fill(existing, raw, now)
-    _add_missing_keys(db, existing.id, keys)
-    _add_sighting(db, existing.id, raw, now)
+    _merge_keys(existing, keys)
+    _merge_sighting(existing, sighting)
     return "merged"
 
 
 def _find(db: Session, keys: list[str]) -> Lead | None:
     if not keys:
         return None
-    identity = db.scalar(select(LeadIdentity).where(LeadIdentity.value.in_(keys)))
-    if identity is None:
-        return None
-    return db.get(Lead, identity.lead_id)
+    # JSON contains any of the keys — scan recent candidates then fall back to full scan of keys
+    key_set = set(keys)
+    for lead in db.scalars(select(Lead).order_by(Lead.id.desc()).limit(5000)).all():
+        owned = set(lead.identity_keys or [])
+        if owned & key_set:
+            return lead
+    return None
+
+
+def _merge_keys(lead: Lead, keys: list[str]) -> None:
+    owned = list(lead.identity_keys or [])
+    seen = set(owned)
+    for key in keys:
+        value = key[:400]
+        if value not in seen:
+            owned.append(value)
+            seen.add(value)
+    lead.identity_keys = owned[:40]
+
+
+def _merge_sighting(lead: Lead, sighting: dict) -> None:
+    rows = list(lead.sightings or [])
+    for row in rows:
+        if (
+            row.get("source") == sighting.get("source")
+            and row.get("external_id") == sighting.get("external_id")
+            and row.get("source_url") == sighting.get("source_url")
+        ):
+            return
+    rows.append(sighting)
+    lead.sightings = rows[-30:]
 
 
 def _apply_details(lead: Lead, raw: RawLead, landline: str | None, mobile: str | None) -> None:
@@ -165,37 +198,3 @@ def _append_token(existing: str, token: str, sep: str) -> str:
     if sep == "|":
         parts = parts[:8]
     return divider.join(parts)
-
-
-def _add_missing_keys(db: Session, lead_id: int, keys: list[str]) -> None:
-    owned = set(db.scalars(select(LeadIdentity.value).where(LeadIdentity.lead_id == lead_id)).all())
-    for key in keys:
-        value = key[:400]
-        if value in owned:
-            continue
-        taken = db.scalar(select(LeadIdentity.id).where(LeadIdentity.value == value))
-        if taken is None:
-            db.add(LeadIdentity(lead_id=lead_id, value=value))
-            owned.add(value)
-
-
-def _add_sighting(db: Session, lead_id: int, raw: RawLead, now: datetime) -> None:
-    existing = db.scalar(
-        select(LeadSighting.id).where(
-            LeadSighting.lead_id == lead_id,
-            LeadSighting.source == raw.source,
-            LeadSighting.external_id == raw.external_id,
-            LeadSighting.source_url == (clip(raw.source_url, 500)),
-        )
-    )
-    if existing is not None:
-        return
-    db.add(
-        LeadSighting(
-            lead_id=lead_id,
-            source=raw.source,
-            source_url=clip(raw.source_url, 500),
-            external_id=clip(raw.external_id, 200),
-            found_at=now,
-        )
-    )

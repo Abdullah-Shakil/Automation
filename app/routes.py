@@ -1,5 +1,6 @@
-from datetime import datetime, timezone
-from urllib.parse import quote, urlencode
+"""Dashboard routes — Workers start/stop, Bots are usage meters, Leads list."""
+
+from urllib.parse import quote
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -7,163 +8,104 @@ from sqlalchemy import func, select
 
 from app.config import Settings, get_settings
 from app.db import session_scope
-from app.models import Bot, BotLog, Lead, Profession, WorkerHeartbeat
-from app.normalize import SIC_RE, TAG_RE, slugify
-from app.seed import restore_builtins
+from app.models import Bot, Lead, Log, Worker
+from app.seed import ensure_bots, ensure_workers
 from app.services.leads import LeadFilters, search_leads
-from app.services.runner import as_utc, utcnow
-from app.services.usage import ensure_window, has_capacity, period_label, window_bounds
-from app.sources.base import SEARCH_LOCATION
+from app.services.runner import as_utc, heartbeat_view, utcnow
+from app.services.usage import ensure_window, period_label, window_bounds
 from app.sources.registry import default_registry
-from app.templating import templates
+from app.templating import format_remaining, templates
+from app.profiles import merge_profile
+from app.trades import list_presets, normalize_preset, preset_label
+from app.workers.checks import cached_result, ensure_checks
 from app.workers.registry import default_workers
 
 router = APIRouter()
 
 
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
+def _now():
+    return utcnow()
 
 
 def _render(request: Request, name: str, context: dict, status_code: int = 200):
     context = dict(context)
     context["notice"] = request.query_params.get("notice")
+    context["error"] = request.query_params.get("error")
     context["request"] = request
     return templates.TemplateResponse(request, name, context, status_code=status_code)
 
 
-def _go(path: str, notice: str | None = None):
+def _go(path: str, notice: str | None = None, error: str | None = None):
+    parts = []
     if notice:
+        parts.append(f"notice={quote(notice)}")
+    if error:
+        parts.append(f"error={quote(error)}")
+    if parts:
         join = "&" if "?" in path else "?"
-        path = f"{path}{join}notice={quote(notice)}"
+        path = f"{path}{join}{'&'.join(parts)}"
     return RedirectResponse(path, status_code=303)
 
 
-def _bad_form(_request: Request, fallback: str, message: str):
-    return _go(fallback, message)
+def _bad(fallback: str, message: str):
+    return _go(fallback, error=message)
 
 
-async def _form(request: Request):
-    return await request.form()
+def _tab_error_html(title: str, detail: str, retry_href: str = "/") -> str:
+    safe_title = title.replace("<", "&lt;")
+    safe_detail = str(detail).replace("<", "&lt;")
+    safe_retry = retry_href.replace('"', "&quot;")
+    return (
+        '<section class="panel tab-error" role="alert">'
+        f'<h2 class="section-title">{safe_title}</h2>'
+        '<p class="hint">This tab could not load. Other tabs should still work — try Workers, Bots, or Leads above.</p>'
+        f'<p class="flash flash-error"><code>{safe_detail}</code></p>'
+        f'<p class="hint"><a href="{safe_retry}">Retry this tab</a></p>'
+        "</section>"
+    )
 
 
-def _worker_view(db, settings: Settings, now: datetime) -> dict:
-    """Heartbeat of the cloud collector. This PC never runs collection."""
-    row = db.get(WorkerHeartbeat, 1)
-    if row is None:
-        return {
-            "online": False,
-            "last_seen": None,
-            "detail": "The cloud collector has not reported in yet. This PC only stores start and stop. Collection runs on GitHub Actions after you turn a scheduler on.",
-        }
-    last = as_utc(row.last_seen)
-    stale_after = max(30.0, settings.worker_poll_seconds * 4)
-    online = last is not None and (now - last).total_seconds() <= stale_after
-    if online:
-        detail = "The cloud collector reported in just now. You can close this PC."
-    else:
-        detail = "The cloud collector is between runs. Bots stay as you left them and continue on the next cloud run."
-    return {"online": online, "last_seen": last, "detail": detail}
+def _dashboard_shell(request: Request, tab: str, tab_error: str):
+    """Keep nav + tab chrome; show the failure only inside the tab body."""
+    return _render(
+        request,
+        "dashboard.html",
+        {
+            "tab": tab,
+            "active": "bots" if tab == "bots" else "workers",
+            "trade_label": "",
+            "tab_error": tab_error,
+        },
+        status_code=200,
+    )
 
 
-def _profession_snapshot(row: Profession) -> dict:
-    return {
-        "slug": row.slug,
-        "label": row.label,
-        "keywords": list(row.keywords or []),
-        "sic_codes": list(row.sic_codes or []),
-        "osm_tags": list(row.osm_tags or []),
-    }
+def _tab_from_request(request: Request) -> str:
+    tab = (request.query_params.get("tab") or "").strip().lower()
+    if tab in {"workers", "bots"}:
+        return tab
+    return "workers"
 
 
-def _ensure_worker_bots(db) -> None:
-    """One bot per collectable source. Drops bots for sources that were removed."""
-    from sqlalchemy import delete
-
-    from app.services.runner import add_log
-
-    profession_rows = db.scalars(select(Profession).order_by(Profession.label.asc())).all()
-    snapshot = [_profession_snapshot(row) for row in profession_rows]
-    now = _now()
-    collect_keys = {adapter.key for adapter in default_registry.all() if adapter.group == "collect"}
-    by_source: dict[str, Bot] = {}
-    for bot in db.scalars(select(Bot).order_by(Bot.id.asc())).all():
-        if bot.source not in collect_keys:
-            db.execute(delete(BotLog).where(BotLog.bot_id == bot.id))
-            db.delete(bot)
-            continue
-        if bot.source not in by_source:
-            by_source[bot.source] = bot
-    for adapter in default_registry.all():
-        if adapter.group != "collect":
-            continue
-        bot = by_source.get(adapter.key)
-        if bot is None:
-            bot = Bot(
-                name=adapter.label,
-                location=SEARCH_LOCATION,
-                source=adapter.key,
-                status="stopped",
-                professions=snapshot,
-                checkpoint={},
-                progress_note="Ready. Start when this source is connected.",
-                selected_worker="",
-                last_error="",
-                leads_found=0,
-                duplicates_found=0,
-                requests_made=0,
-                steps_succeeded=0,
-                steps_failed=0,
-                run_seconds=0,
-                error_count=0,
-                next_run_at=None,
-                last_run_at=None,
-                created_at=now,
-                updated_at=now,
-            )
-            db.add(bot)
-            db.flush()
-            add_log(db, bot, "info", f"Bot created for source {adapter.label}.", now)
-            by_source[adapter.key] = bot
-        else:
-            if not (bot.name or "").strip():
-                bot.name = adapter.label
-            bot.professions = snapshot
-            bot.updated_at = now
+def _ensure_rows(db) -> None:
+    ensure_bots(db)
+    ensure_workers(db)
 
 
-def _source_views(settings: Settings, db=None, now: datetime | None = None) -> tuple[list[dict], list[dict]]:
+def _source_views(settings: Settings, db, now) -> tuple[list[dict], list[dict]]:
     collect = []
     unsupported = []
-    now = now or _now()
-    bots_by_source: dict[str, Bot] = {}
-    if db is not None:
-        for bot in db.scalars(select(Bot).order_by(Bot.id.asc())).all():
-            if bot.source not in bots_by_source:
-                bots_by_source[bot.source] = bot
+    bots_by_key = {b.key: b for b in db.scalars(select(Bot).order_by(Bot.id.asc())).all()}
     for adapter in default_registry.all():
         available, reason = adapter.is_available(settings)
         quota = adapter.quota
         used = 0
         reset_at = window_bounds(now, quota)[1]
-        if db is not None and adapter.group == "collect":
+        bot = bots_by_key.get(adapter.key)
+        if adapter.group == "collect" and bot is not None:
             window = ensure_window(db, adapter.key, now, quota)
             used = window.requests_used
             _start, reset_at = window_bounds(now, quota)
-        bot = bots_by_source.get(adapter.key)
-        effective_available = available
-        effective_reason = reason
-        if bot is not None and (bot.selected_worker or "").strip():
-            try:
-                override = default_registry.get(bot.selected_worker.strip())
-                effective_available, effective_reason = override.is_available(settings)
-            except KeyError:
-                effective_available, effective_reason = False, "Selected worker is no longer available."
-        can_start = bool(
-            effective_available
-            and bot is not None
-            and bot.status not in {"running"}
-        )
         item = {
             "key": adapter.key,
             "label": adapter.label,
@@ -174,345 +116,489 @@ def _source_views(settings: Settings, db=None, now: datetime | None = None) -> t
             "limit": quota.requests,
             "reset_at": reset_at,
             "available": available,
-            "reason": reason if not (bot and bot.selected_worker) else effective_reason,
-            "connection": "Connected" if available else "Not connected",
+            "reason": reason,
             "bot": bot,
-            "can_start": can_start,
-            "checked": False,
         }
         if adapter.group == "unsupported":
             unsupported.append(item)
         else:
             collect.append(item)
-    for item in collect:
-        if item["available"]:
-            item["checked"] = True
-            break
     return collect, unsupported
 
 
-def _tab_from_request(request: Request) -> str:
-    tab = (request.query_params.get("tab") or "").strip().lower()
-    if tab in {"workers", "bots"}:
-        return tab
-    return "workers"
-
-
-def _free_worker_views(settings: Settings) -> list[dict]:
-    from app.workers.checks import cached_result
-
+def _worker_rows(settings: Settings, db, now) -> list[dict]:
+    ensure_checks(settings)
     rows = []
-    for worker in default_workers.all():
-        available, reason = worker.is_available(settings)
-        check = cached_result(worker.key)
+    db_workers = {w.key: w for w in db.scalars(select(Worker).order_by(Worker.id.asc())).all()}
+    for spec in default_workers.all():
+        if not spec.can_collect:
+            # Still show AI-assist keys as inactive info? User asked workers with start/stop for collect.
+            # Keep non-collect out of the startable table; show on a small note instead.
+            continue
+        row = db_workers.get(spec.key)
+        available, reason = spec.is_available(settings)
+        check = cached_result(spec.key)
         if check is None:
-            if available:
-                status = "Key set"
-                status_kind = "key"
-                detail = f"Key is in .env. Click Check connections to verify with {worker.signup_label}."
-            else:
-                status = "Not connected"
-                status_kind = "off"
-                detail = reason
+            conn = "Not connected"
+            conn_kind = "off"
+            detail = reason or ""
+            available = False
         elif check.ok:
-            status = "Connected"
-            status_kind = "ok"
-            detail = check.detail
+            conn, conn_kind, detail = "Connected", "ok", ""
             available = True
         else:
-            status = "Failed"
-            status_kind = "fail"
-            detail = check.detail
+            conn, conn_kind, detail = "Not connected", "fail", check.detail or reason or ""
             available = False
+        quota = spec.quota
+        used = 0
+        reset_at = window_bounds(now, quota)[1]
+        if row is not None:
+            window = ensure_window(db, spec.key, now, quota)
+            used = window.requests_used
+            _s, reset_at = window_bounds(now, quota)
         rows.append(
             {
-                "key": worker.key,
-                "label": worker.label,
-                "description": worker.description,
-                "signup_url": worker.signup_url,
-                "signup_label": worker.signup_label,
-                "env_name": worker.env_name,
-                "quota_title": worker.quota.title,
+                "key": spec.key,
+                "label": spec.label,
+                "description": spec.description,
+                "signup_url": spec.signup_url,
+                "signup_label": spec.signup_label,
+                "env_name": spec.env_name,
+                "quota_title": quota.title,
+                "used": used,
+                "limit": quota.requests,
+                "reset_at": reset_at,
+                "reset_in": format_remaining(reset_at, now=now),
                 "available": available,
                 "reason": detail,
-                "status": status,
-                "status_kind": status_kind,
-                "can_collect": worker.can_collect,
-                "connection": status,
+                "status": row.status if row else "stopped",
+                "conn": conn,
+                "conn_kind": conn_kind,
+                "row": row,
+                "leads_found": int(row.leads_found or 0) if row else 0,
+                "is_running": bool(row is not None and row.status in {"running", "limit_reached"}),
+                "can_start": bool(available and row is not None and row.status not in {"running", "limit_reached"}),
             }
         )
     return rows
 
 
-def _worker_choices(settings: Settings) -> list[dict]:
-    """Connected free workers that can be activated on a bot."""
-    from app.workers.checks import cached_result
-
-    choices = []
-    for worker in default_workers.all():
-        available, _reason = worker.is_available(settings)
-        check = cached_result(worker.key)
-        if check is not None:
-            available = check.ok
-        elif not available:
+def _assist_workers(settings: Settings) -> list[dict]:
+    ensure_checks(settings)
+    rows = []
+    for spec in default_workers.all():
+        if spec.can_collect:
             continue
-        if not available:
-            continue
-        choices.append(
-            {
-                "key": worker.key,
-                "label": worker.label,
-                "can_collect": worker.can_collect,
-            }
+        check = cached_result(spec.key)
+        if check is not None and check.ok:
+            status, conn = "Connected", "Connected"
+            reason = ""
+        elif check is not None:
+            status, conn = "Not connected", "Not connected"
+            reason = check.detail or ""
+        else:
+            available, reason = spec.is_available(settings)
+            status = "Connected" if available else "Not connected"
+            conn = status
+        rows.append(
+            merge_profile(
+                "worker",
+                spec.key,
+                {
+                    "key": spec.key,
+                    "label": spec.label,
+                    "description": spec.description,
+                    "env_name": spec.env_name,
+                    "signup_url": spec.signup_url,
+                    "signup_label": spec.signup_label,
+                    "status": status,
+                    "conn": conn,
+                    "reason": reason,
+                },
+            )
         )
-    return choices
+    return rows
+
+
+def _profile_payload(sources: list[dict], workers: list[dict], cloud_runners: list[dict] | None = None) -> dict:
+    bots = []
+    for source in sources:
+        bot = source.get("bot")
+        if bot is None:
+            continue
+        pct = round(100 * source["used"] / max(source["limit"], 1), 1) if source["limit"] else None
+        reset_at = source.get("reset_at")
+        bots.append(
+            merge_profile(
+                "bot",
+                bot.key,
+                {
+                    "id": f"bot-{bot.key}",
+                    "key": bot.key,
+                    "kind": "bot",
+                    "name": bot.name or source["label"],
+                    "description": source["description"],
+                    "status": bot.status,
+                    "status_label": bot.status.replace("_", " "),
+                    "used": source["used"],
+                    "limit": source["limit"],
+                    "quota_title": source["quota_title"],
+                    "quota_detail": source.get("quota_detail") or "",
+                    "reset_at": reset_at.isoformat() if reset_at else None,
+                    "reset_in": format_remaining(reset_at) if reset_at else None,
+                    "pct_used": pct,
+                    "leads_found": bot.leads_found,
+                    "progress_note": bot.progress_note or "",
+                    "last_error": bot.last_error or "",
+                    "reason": source.get("reason") or "",
+                    "connected": source.get("available"),
+                    "conn": "Connected" if source.get("available") else "Not connected",
+                    "profile_href": f"/profiles/bot/{bot.key}",
+                },
+            )
+        )
+    worker_profiles = []
+    for w in workers:
+        pct = round(100 * w["used"] / max(w["limit"], 1), 1) if w["limit"] else None
+        reset_at = w.get("reset_at")
+        worker_profiles.append(
+            merge_profile(
+                "worker",
+                w["key"],
+                {
+                    "id": f"worker-{w['key']}",
+                    "key": w["key"],
+                    "kind": "worker",
+                    "name": w["label"],
+                    "description": w["description"],
+                    "status": w["status"],
+                    "status_label": w["status"].replace("_", " "),
+                    "used": w["used"],
+                    "limit": w["limit"],
+                    "quota_title": w["quota_title"],
+                    "reset_at": reset_at.isoformat() if reset_at else None,
+                    "reset_in": w.get("reset_in") or (format_remaining(reset_at) if reset_at else None),
+                    "pct_used": pct,
+                    "env_name": w["env_name"],
+                    "signup_url": w["signup_url"],
+                    "signup_label": w["signup_label"],
+                    "reason": w.get("reason") or "",
+                    "leads_found": w.get("leads_found") or 0,
+                    "connected": w.get("available"),
+                    "conn": w.get("conn"),
+                    "is_running": w.get("is_running"),
+                    "progress_note": (w["row"].progress_note if w.get("row") else "") or "",
+                    "last_error": (w["row"].last_error if w.get("row") else "") or "",
+                    "profile_href": f"/profiles/worker/{w['key']}",
+                },
+            )
+        )
+    schedulers = []
+    for runner in cloud_runners or []:
+        schedulers.append(
+            merge_profile(
+                "scheduler",
+                runner["key"],
+                {
+                    "id": f"scheduler-{runner['key']}",
+                    "key": runner["key"],
+                    "kind": "scheduler",
+                    "name": runner["label"],
+                    "description": runner.get("summary") or "",
+                    "status": runner.get("status") or ("on" if runner.get("on") else "off"),
+                    "status_label": runner.get("status") or ("On" if runner.get("on") else "Off"),
+                    "conn": "Connected" if runner.get("on") else "Off",
+                    "connected": bool(runner.get("on")),
+                    "used": None,
+                    "limit": None,
+                    "quota_title": "Scheduler — no API quota",
+                    "leads_found": None,
+                    "selected": bool(runner.get("selected")),
+                    "needs_card": bool(runner.get("needs_card")),
+                    "setup": runner.get("setup") or "",
+                    "profile_href": f"/profiles/scheduler/{runner['key']}",
+                },
+            )
+        )
+    return {"bots": bots, "workers": worker_profiles, "schedulers": schedulers}
 
 
 def _dashboard_context(db, settings: Settings, tab: str) -> dict:
-    from app.cloud.runners import runner_views, selected_runner
+    from app.cloud.runners import get_trade_preset, runner_views, selected_runner
     from app.services.enrich import website_usage
 
-    _ensure_worker_bots(db)
-    live = _live_context(db, settings)
-    sources, unsupported = _source_views(settings, db, live["now"])
-    professions = db.scalars(select(Profession).order_by(Profession.label.asc())).all()
+    _ensure_rows(db)
+    now = _now()
+    sources, unsupported = _source_views(settings, db, now)
+    workers = _worker_rows(settings, db, now)
+    trade = get_trade_preset(db)
+    cloud_runners = runner_views(settings, selected_runner(db))
+    total_leads = int(db.scalar(select(func.count()).select_from(Lead)) or 0)
+    logs = db.scalars(select(Log).order_by(Log.id.desc()).limit(20)).all()
+    assist = _assist_workers(settings)
+    profiles = _profile_payload(sources, workers, cloud_runners)
+    for item in assist:
+        key = item.get("key") or ""
+        profiles.setdefault("workers", []).append(
+            {
+                **item,
+                "id": f"worker-{key}",
+                "kind": "worker",
+                "name": item.get("label") or key,
+                "status_label": item.get("status") or "",
+                "leads_found": None,
+            }
+        )
     return {
-        **live,
         "tab": tab,
-        "professions": professions,
+        "now": now,
+        "trade_preset": trade,
+        "trade_label": preset_label(trade),
+        "trade_options": list_presets(),
         "sources": sources,
         "unsupported": unsupported,
-        "free_workers": _free_worker_views(settings),
-        "worker_choices": _worker_choices(settings),
-        "cloud_runners": runner_views(settings, selected_runner(db)),
-        "website_usage": website_usage(db, live["now"]),
-        "active": "dashboard",
-    }
-
-
-def _live_context(db, settings: Settings) -> dict:
-    now = _now()
-    bots = db.scalars(select(Bot).order_by(Bot.updated_at.desc(), Bot.id.desc())).all()
-    logs = db.scalars(select(BotLog).order_by(BotLog.id.desc()).limit(12)).all()
-    return {
-        "bots": bots,
+        "workers": workers,
+        "assist_workers": assist,
+        "cloud_runners": cloud_runners,
+        "total_leads": total_leads,
+        "website_usage": website_usage(db, now),
+        "worker": heartbeat_view(db, settings, now),
         "logs": logs,
-        "worker": _worker_view(db, settings, now),
-        "now": now,
+        "profiles": profiles,
+        "active": "bots" if tab == "bots" else "workers",
     }
-
-
-def _filters_from_query(request: Request, per_page: int = 50) -> LeadFilters:
-    params = request.query_params
-    try:
-        page = int(params.get("page") or 1)
-    except ValueError:
-        page = 1
-    return LeadFilters(
-        q=(params.get("q") or "").strip(),
-        profession=(params.get("profession") or "").strip(),
-        source=(params.get("source") or "").strip(),
-        has_email=params.get("has_email") == "1",
-        has_phone=params.get("has_phone") == "1",
-        has_mobile=params.get("has_mobile") == "1",
-        company_number=(params.get("company_number") or "").strip(),
-        town=(params.get("town") or "").strip(),
-        status=(params.get("status") or "").strip(),
-        sic=(params.get("sic") or "").strip(),
-        page=page,
-        per_page=per_page,
-    )
-
-
-def _filter_query(filters: LeadFilters, page: int | None = None) -> str:
-    pairs = []
-    if filters.q:
-        pairs.append(("q", filters.q))
-    if filters.profession:
-        pairs.append(("profession", filters.profession))
-    if filters.source:
-        pairs.append(("source", filters.source))
-    if filters.has_email:
-        pairs.append(("has_email", "1"))
-    if filters.has_phone:
-        pairs.append(("has_phone", "1"))
-    if filters.has_mobile:
-        pairs.append(("has_mobile", "1"))
-    if filters.company_number:
-        pairs.append(("company_number", filters.company_number))
-    if filters.town:
-        pairs.append(("town", filters.town))
-    if filters.status:
-        pairs.append(("status", filters.status))
-    if filters.sic:
-        pairs.append(("sic", filters.sic))
-    if page and page > 1:
-        pairs.append(("page", str(page)))
-    return urlencode(pairs)
 
 
 @router.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
     settings = get_settings()
     tab = _tab_from_request(request)
-    with session_scope() as db:
-        return _render(request, "dashboard.html", _dashboard_context(db, settings, tab))
+    try:
+        with session_scope() as db:
+            return _render(request, "dashboard.html", _dashboard_context(db, settings, tab))
+    except Exception as exc:
+        return _dashboard_shell(request, tab, f"Internal error loading {tab}: {exc}")
 
 
 @router.get("/partials/dashboard", response_class=HTMLResponse)
 def dashboard_partial(request: Request):
     settings = get_settings()
     tab = _tab_from_request(request)
-    with session_scope() as db:
-        return _render(request, "_dashboard_tab.html", _dashboard_context(db, settings, tab))
+    try:
+        with session_scope() as db:
+            return _render(request, "_dashboard_tab.html", _dashboard_context(db, settings, tab))
+    except Exception as exc:
+        return HTMLResponse(
+            _tab_error_html("Internal error", f"Could not refresh the {tab} tab: {exc}", f"/?tab={tab}"),
+            status_code=200,
+        )
 
 
-@router.post("/workers/check")
-def check_workers(request: Request):
-    from app.workers.checks import verify_all
-
-    results = verify_all()
-    ok = sum(1 for item in results.values() if item.ok)
-    total = len(results)
-    return _go("/?tab=workers", f"Checked {total} workers: {ok} connected.")
-
-
-@router.post("/bots/{bot_id}/start")
-async def start_bot(request: Request, bot_id: int):
-    return await _set_bot_status(request, bot_id, "running")
-
-
-@router.post("/bots/{bot_id}/pause")
-async def pause_bot(request: Request, bot_id: int):
-    return await _set_bot_status(request, bot_id, "paused")
-
-
-@router.post("/bots/{bot_id}/stop")
-async def stop_bot(request: Request, bot_id: int):
-    return await _set_bot_status(request, bot_id, "stopped")
-
-
-@router.post("/bots/{bot_id}/worker")
-async def assign_worker(request: Request, bot_id: int):
-    tab = _tab_from_request(request)
-    fallback = f"/?tab={tab}" if tab else f"/bots/{bot_id}"
-    form = await request.form()
-    selected = (form.get("selected_worker") or "").strip()
+@router.post("/workers/{worker_key}/start")
+async def start_worker(request: Request, worker_key: str):
     settings = get_settings()
-    if selected:
+    try:
         try:
-            worker = default_workers.get(selected)
+            spec = default_workers.get(worker_key)
         except KeyError:
-            return _bad_form(request, fallback, "That worker is not available.")
-        available, reason = worker.is_available(settings)
+            return _bad("/?tab=workers", "Unknown worker.")
+        if not spec.can_collect:
+            return _bad("/?tab=workers", "That worker cannot collect leads.")
+        available, reason = spec.is_available(settings)
         if not available:
-            return _bad_form(request, fallback, reason or "Connect that worker in .env first.")
-        if not worker.can_collect:
-            return _bad_form(
-                request,
-                fallback,
-                f"{worker.label} is for AI assist only. Activate Serper, Tavily, or SerpApi to collect from search.",
+            return _bad("/?tab=workers", reason or "Connect this worker in .env first.")
+        now = _now()
+        with session_scope() as db:
+            _ensure_rows(db)
+            row = db.scalars(select(Worker).where(Worker.key == worker_key)).first()
+            if row is None:
+                return _bad("/?tab=workers", "Worker row missing. Refresh and try again.")
+            from app.services.runner import add_log
+
+            if row.status == "completed":
+                bot = db.scalars(select(Bot).where(Bot.key == worker_key)).first()
+                if bot is not None:
+                    bot.checkpoint = {}
+                    bot.status = "idle"
+            row.status = "running"
+            row.last_error = ""
+            row.progress_note = "Started. The cloud collector will use this worker on the next run."
+            row.updated_at = now
+            add_log(
+                db,
+                kind="worker",
+                ref_key=worker_key,
+                level="info",
+                message="Worker started. Cloud / GitHub will cycle bots with remaining quota.",
+                now=now,
             )
-    now = _now()
-    with session_scope() as db:
-        bot = db.get(Bot, bot_id)
-        if bot is None:
-            return _go("/?tab=bots", "That bot no longer exists.")
-        from app.services.runner import add_log
-
-        bot.selected_worker = selected
-        bot.updated_at = now
-        if selected:
-            add_log(db, bot, "info", f"Worker set to {default_workers.get(selected).label}.", now)
-            notice = "Worker activated for this bot."
-        else:
-            add_log(db, bot, "info", "Worker selection cleared. The bot uses its own source.", now)
-            notice = "Worker cleared."
-    return _go(fallback, notice)
+        return _go("/?tab=workers", f"{spec.label} started.")
+    except Exception as exc:
+        return _bad("/?tab=workers", f"Could not start worker: {exc}")
 
 
-async def _set_bot_status(request: Request, bot_id: int, status: str):
-    tab = _tab_from_request(request)
-    fallback = f"/?tab={tab}" if tab else f"/bots/{bot_id}"
-    now = _now()
-    with session_scope() as db:
-        bot = db.get(Bot, bot_id)
-        if bot is None:
-            return _go("/?tab=bots", "That bot no longer exists.")
-        from app.services.runner import add_log
+@router.post("/workers/{worker_key}/stop")
+async def stop_worker(request: Request, worker_key: str):
+    try:
+        now = _now()
+        with session_scope() as db:
+            row = db.scalars(select(Worker).where(Worker.key == worker_key)).first()
+            if row is None:
+                return _bad("/?tab=workers", "That worker no longer exists.")
+            from app.services.runner import add_log
 
-        if status == "running":
-            settings = get_settings()
-            source_key = (bot.selected_worker or "").strip() or bot.source
-            try:
-                adapter = default_registry.get(source_key)
-            except KeyError:
-                return _bad_form(request, fallback, "That source is no longer available.")
-            available, reason = adapter.is_available(settings)
-            if adapter.group == "unsupported" or not available:
-                return _bad_form(request, fallback, reason or "Connect this source before starting.")
-            window = ensure_window(db, source_key, now, adapter.quota)
-            if bot.status == "completed":
-                bot.checkpoint = {}
-                bot.progress_note = "Started again from the beginning."
-            bot.error_count = 0
-            bot.last_error = ""
-            bot.next_run_at = None
-            if not has_capacity(window, adapter.quota, 1):
-                bot.status = "limit_reached"
-                add_log(db, bot, "warning", "Still at this source's free quota. It will resume when the quota resets.", now)
-                notice = "The free quota is still used up. The bot stays paused until it resets."
-            else:
-                bot.status = "running"
-                add_log(db, bot, "info", "Started. The cloud collector will carry on from the saved position.", now)
-                notice = "Bot started."
-        elif status == "paused":
-            bot.status = "paused"
-            add_log(db, bot, "info", "Paused. Start continues from here.", now)
-            notice = "Bot paused."
-        else:
-            bot.status = "stopped"
-            add_log(db, bot, "info", "Stopped. Progress is saved. Start continues from here.", now)
-            notice = "Bot stopped. Progress is saved."
-        bot.updated_at = now
-    return _go(fallback, notice)
+            row.status = "stopped"
+            row.progress_note = "Stopped. Progress on matching bots is saved."
+            row.updated_at = now
+            add_log(db, kind="worker", ref_key=worker_key, level="info", message="Worker stopped.", now=now)
+            bot = db.scalars(select(Bot).where(Bot.key == worker_key)).first()
+            if bot is not None and bot.status == "active":
+                bot.status = "idle"
+                bot.updated_at = now
+        return _go("/?tab=workers", "Worker stopped.")
+    except Exception as exc:
+        return _bad("/?tab=workers", f"Could not stop worker: {exc}")
 
 
-@router.get("/bots/{bot_id}", response_class=HTMLResponse)
-def bot_detail(request: Request, bot_id: int):
+@router.post("/trade-preset")
+async def choose_trade_preset(request: Request):
+    try:
+        from app.cloud.runners import set_trade_preset
+
+        form = await request.form()
+        preset = normalize_preset(str(form.get("trade_preset") or ""))
+        with session_scope() as db:
+            set_trade_preset(db, preset)
+        return _go("/?tab=workers", f"Finding: {preset_label(preset)}.")
+    except Exception as exc:
+        return _bad("/?tab=workers", f"Could not save Find preset: {exc}")
+
+
+@router.post("/cloud/runner")
+async def choose_cloud_runner(request: Request):
+    try:
+        from app.cloud.runners import RUNNERS, runner_is_on, set_selected_runner
+
+        form = await request.form()
+        key = str(form.get("runner") or "").strip()
+        match = next((item for item in RUNNERS if item.key == key), None)
+        settings = get_settings()
+        if match is None:
+            return _bad("/?tab=workers", "That cloud runner is not available.")
+        if match.needs_card:
+            return _bad("/?tab=workers", f"{match.label} needs a card, so it stays off.")
+        if not runner_is_on(settings, match):
+            return _bad("/?tab=workers", f"{match.label} stays off until its switch is set.")
+        with session_scope() as db:
+            set_selected_runner(db, key)
+        return _go("/?tab=workers", f"{match.label} selected as the scheduler label on this PC.")
+    except Exception as exc:
+        return _bad("/?tab=workers", f"Could not select cloud runner: {exc}")
+
+
+@router.get("/leads", response_class=HTMLResponse)
+def leads_page(request: Request):
+    try:
+        with session_scope() as db:
+            rows, total = search_leads(db, LeadFilters(page=1, per_page=5000))
+            return _render(request, "leads.html", {"leads": rows, "total": total, "active": "leads"})
+    except Exception as exc:
+        return _render(
+            request,
+            "leads.html",
+            {"active": "leads", "leads": [], "total": 0, "tab_error": f"Internal error loading leads: {exc}"},
+            status_code=200,
+        )
+
+
+@router.get("/leads/{lead_id}", response_class=HTMLResponse)
+def lead_detail(request: Request, lead_id: str):
+    if not lead_id.isdigit():
+        return _render(
+            request,
+            "error.html",
+            {
+                "active": "leads",
+                "error_title": "Not found",
+                "error_detail": "That lead id is not valid.",
+                "retry_href": "/leads",
+            },
+            status_code=404,
+        )
+    try:
+        with session_scope() as db:
+            lead = db.get(Lead, int(lead_id))
+            if lead is None:
+                return _go("/leads", error="That company is not in the database.")
+            return _render(request, "lead.html", {"lead": lead, "active": "leads"})
+    except Exception as exc:
+        return _render(
+            request,
+            "error.html",
+            {
+                "active": "leads",
+                "error_title": "Internal error",
+                "error_detail": f"Lead detail failed: {exc}",
+                "retry_href": "/leads",
+            },
+            status_code=200,
+        )
+
+
+@router.get("/bots/{bot_key}", response_class=HTMLResponse)
+def bot_detail(request: Request, bot_key: str):
     settings = get_settings()
-    with session_scope() as db:
-        bot = db.get(Bot, bot_id)
-        if bot is None:
-            return _go("/", "That bot no longer exists.")
-        context = _bot_context(db, settings, bot)
-        context["active"] = "dashboard"
-        return _render(request, "bot.html", context)
+    try:
+        with session_scope() as db:
+            bot = db.scalars(select(Bot).where(Bot.key == bot_key)).first()
+            if bot is None:
+                return _go("/?tab=bots", error="That bot no longer exists.")
+            return _render(request, "bot.html", _bot_context(db, settings, bot))
+    except Exception as exc:
+        return _render(
+            request,
+            "bot.html",
+            {"active": "bots", "bot": None, "tab_error": f"Internal error loading bot: {exc}"},
+            status_code=200,
+        )
 
 
-@router.get("/partials/bots/{bot_id}", response_class=HTMLResponse)
-def bot_partial(request: Request, bot_id: int):
+@router.get("/partials/bots/{bot_key}", response_class=HTMLResponse)
+def bot_partial(request: Request, bot_key: str):
     settings = get_settings()
-    with session_scope() as db:
-        bot = db.get(Bot, bot_id)
-        if bot is None:
-            return HTMLResponse("This bot no longer exists.", status_code=404)
-        return _render(request, "_bot_live.html", _bot_context(db, settings, bot))
+    try:
+        with session_scope() as db:
+            bot = db.scalars(select(Bot).where(Bot.key == bot_key)).first()
+            if bot is None:
+                return HTMLResponse(
+                    _tab_error_html("Not found", "This bot no longer exists.", "/?tab=bots"),
+                    status_code=200,
+                )
+            return _render(request, "_bot_live.html", _bot_context(db, settings, bot))
+    except Exception as exc:
+        return HTMLResponse(
+            _tab_error_html("Internal error", f"Could not refresh this bot: {exc}", f"/bots/{bot_key}"),
+            status_code=200,
+        )
 
 
 def _bot_context(db, settings: Settings, bot: Bot) -> dict:
     now = _now()
-    logs = db.scalars(select(BotLog).where(BotLog.bot_id == bot.id).order_by(BotLog.id.desc()).limit(80)).all()
+    logs = db.scalars(
+        select(Log).where(Log.kind == "bot", Log.ref_key == bot.key).order_by(Log.id.desc()).limit(80)
+    ).all()
     error_count = db.scalar(
-        select(func.count()).select_from(BotLog).where(BotLog.bot_id == bot.id, BotLog.level == "error")
+        select(func.count())
+        .select_from(Log)
+        .where(Log.kind == "bot", Log.ref_key == bot.key, Log.level == "error")
     )
     quota_row = None
     try:
-        adapter = default_registry.get(bot.source)
+        adapter = default_registry.get(bot.key)
     except KeyError:
         adapter = None
     if adapter is not None:
-        window = ensure_window(db, bot.source, now, adapter.quota)
+        window = ensure_window(db, bot.key, now, adapter.quota)
         _start, reset_at = window_bounds(now, adapter.quota)
         quota_row = {
             "label": adapter.label,
@@ -528,167 +614,26 @@ def _bot_context(db, settings: Settings, bot: Bot) -> dict:
         "logs": logs,
         "error_count": int(error_count or 0),
         "quota": quota_row,
-        "worker": _worker_view(db, settings, now),
+        "worker": heartbeat_view(db, settings, now),
+        "active": "bots",
     }
 
 
-@router.post("/cloud/runner")
-async def choose_cloud_runner(request: Request):
-    from app.cloud.runners import RUNNERS, runner_is_on, set_selected_runner
-
-    form = await _form(request)
-    key = str(form.get("runner") or "").strip()
-    match = next((item for item in RUNNERS if item.key == key), None)
-    settings = get_settings()
-    if match is None:
-        return _bad_form(request, "/?tab=workers", "That cloud runner is not available.")
-    if match.needs_card:
-        return _bad_form(request, "/?tab=workers", f"{match.label} needs a card, so it stays off.")
-    if not runner_is_on(settings, match):
-        return _bad_form(
-            request,
-            "/?tab=workers",
-            f"{match.label} stays off until its switch is set. See the setup note on this page.",
-        )
-    with session_scope() as db:
-        set_selected_runner(db, key)
-    return _go("/?tab=workers", f"{match.label} is the scheduler this dashboard is showing. Collection still runs only in the cloud.")
+@router.get("/profiles/{kind}/{key}", response_class=HTMLResponse)
+def profile_page(request: Request, kind: str, key: str):
+    """Legacy URL → same-page overlay via ?profile= on the matching tab."""
+    kind_norm = (kind or "").strip().lower()
+    key_norm = (key or "").strip().lower()
+    if kind_norm in {"bots", "bot"}:
+        return _go(f"/?tab=bots&profile=bot-{key_norm}")
+    if kind_norm in {"schedulers", "scheduler", "runners", "runner", "apis", "api"}:
+        return _go(f"/?tab=workers&profile=scheduler-{key_norm}")
+    return _go(f"/?tab=workers&profile=worker-{key_norm}")
 
 
-@router.get("/leads", response_class=HTMLResponse)
-def leads_page(request: Request):
-    filters = _filters_from_query(request)
-    with session_scope() as db:
-        rows, total = search_leads(db, filters)
-        pages = max(1, (total + filters.per_page - 1) // filters.per_page)
-        page = min(max(filters.page, 1), pages)
-        professions = db.scalars(select(Lead.profession).distinct().order_by(Lead.profession.asc())).all()
-        sources = db.scalars(select(Lead.primary_source).distinct().order_by(Lead.primary_source.asc())).all()
-        return _render(
-            request,
-            "leads.html",
-            {
-                "leads": rows,
-                "total": total,
-                "filters": filters,
-                "page": page,
-                "pages": pages,
-                "professions": professions,
-                "sources": sources,
-                "query_base": _filter_query(filters),
-                "active": "leads",
-            },
-        )
-
-
-@router.get("/leads/{lead_id}", response_class=HTMLResponse)
-def lead_detail(request: Request, lead_id: str):
-    if not lead_id.isdigit():
-        return HTMLResponse("Not found", status_code=404)
-    with session_scope() as db:
-        lead = db.get(Lead, int(lead_id))
-        if lead is None:
-            return _go("/leads", "That company is not in the database.")
-        return _render(request, "lead.html", {"lead": lead, "active": "leads"})
-
-
-@router.get("/professions", response_class=HTMLResponse)
-def professions_page(request: Request):
-    with session_scope() as db:
-        rows = db.scalars(select(Profession).order_by(Profession.label.asc())).all()
-        return _render(request, "professions.html", {"professions": rows, "active": "professions"})
-
-
+@router.get("/professions")
 @router.post("/professions")
-async def add_profession(request: Request):
-    form = await _form(request)
-    label = " ".join(str(form.get("label") or "").split())
-    if len(label) < 2 or len(label) > 80:
-        return _bad_form(request, "/professions", "Enter a profession name.")
-    try:
-        keywords = _split_words(str(form.get("keywords") or ""), fallback=[label])
-        sic_codes = _split_sic(str(form.get("sic_codes") or ""))
-        osm_tags = _split_tags(str(form.get("osm_tags") or ""))
-    except ValueError as exc:
-        return _bad_form(request, "/professions", str(exc))
-    if not keywords:
-        return _bad_form(request, "/professions", "Add at least one search keyword.")
-    slug = slugify(label)
-    with session_scope() as db:
-        taken = set(db.scalars(select(Profession.slug)).all())
-        base = slug
-        number = 2
-        while slug in taken:
-            slug = f"{base[:54]}-{number}"
-            number += 1
-        db.add(
-            Profession(
-                slug=slug,
-                label=label,
-                keywords=keywords,
-                sic_codes=sic_codes,
-                osm_tags=osm_tags,
-                is_builtin=False,
-                created_at=utcnow(),
-            )
-        )
-    return _go("/professions", f"Added {label}.")
-
-
 @router.post("/professions/{slug}/delete")
-async def delete_profession(request: Request, slug: str):
-    await _form(request)
-    with session_scope() as db:
-        row = db.scalar(select(Profession).where(Profession.slug == slug))
-        if row is not None:
-            db.delete(row)
-    return _go("/professions", "Profession removed. Bots already running keep the copy they started with.")
-
-
 @router.post("/professions/restore")
-async def restore_professions(request: Request):
-    await _form(request)
-    with session_scope() as db:
-        added = restore_builtins(db)
-    return _go("/professions", f"Built-in list refreshed. {added} added back.")
-
-
-def _split_words(text: str, fallback: list[str]) -> list[str]:
-    parts = [" ".join(piece.split()) for piece in text.split(",")]
-    parts = [piece for piece in parts if piece]
-    if not parts:
-        parts = fallback
-    cleaned = []
-    for piece in parts[:8]:
-        if len(piece) > 40 or any(ord(char) < 32 for char in piece):
-            raise ValueError("Keywords need to be short plain words, separated by commas.")
-        cleaned.append(piece)
-    return cleaned
-
-
-def _split_sic(text: str) -> list[str]:
-    codes = []
-    for piece in text.split(","):
-        code = piece.strip()
-        if not code:
-            continue
-        if not SIC_RE.match(code):
-            raise ValueError("SIC codes are 4 or 5 digits, separated by commas.")
-        codes.append(code)
-    return codes[:8]
-
-
-def _split_tags(text: str) -> list[dict]:
-    tags = []
-    for piece in text.split(","):
-        piece = piece.strip()
-        if not piece:
-            continue
-        if "=" not in piece:
-            raise ValueError("OpenStreetMap tags look like craft=plumber, separated by commas.")
-        key, value = piece.split("=", 1)
-        key, value = key.strip(), value.strip()
-        if not TAG_RE.match(key) or not TAG_RE.match(value):
-            raise ValueError("OpenStreetMap tags can only use letters, numbers, and : _ -.")
-        tags.append({"key": key, "value": value})
-    return tags[:8]
+async def professions_gone(request: Request, slug: str | None = None):
+    return _go("/?tab=workers", "Trades are fixed. Use Find on the Workers tab.")

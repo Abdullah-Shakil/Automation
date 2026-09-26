@@ -7,8 +7,26 @@ name: Collect
 # without waiting for GitHub's scheduler.
 # Public repositories: unlimited Actions minutes on standard runners.
 # Private repositories: 2,000 minutes a month. The worker exits when nothing is due.
+#
+# Trade selection (All or one profession):
+# - workflow_dispatch input "trade_preset" (cron-job.org can send it in the JSON body)
+# - or repository variable TRADE_PRESET (used by the schedule and as dispatch default)
+# - or the value saved from the Workers table on the dashboard (shared database)
 on:
   workflow_dispatch:
+    inputs:
+      trade_preset:
+        description: "What to find — all five trades, or one"
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - electrician
+          - gardener
+          - painter
+          - plumber
+          - solicitor
   schedule:
     - cron: "17 */3 * * *"
 
@@ -28,9 +46,12 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
-      - run: python -m app.worker --max-seconds 480
+      - name: Collect
+        run: python -m app.worker --max-seconds 480
         env:
           LEADLANE_CLOUD_WORKER: "1"
+          # Prefer dispatch input; fall back to repo variable; blank keeps dashboard DB choice.
+          TRADE_PRESET: ${{ github.event.inputs.trade_preset || vars.TRADE_PRESET || '' }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           USER_AGENT: ${{ secrets.USER_AGENT }}
           COMPANIES_HOUSE_API_KEY: ${{ secrets.COMPANIES_HOUSE_API_KEY }}

@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}{% if profile %}{{ profile.name }}{% else %}Profile{% endif %} · Leadlane{% endblock %}
+{% block content %}
+{% if tab_error %}
+{% set error_title = "Internal error" %}
+{% set error_detail = tab_error %}
+{% set retry_href = "/?tab=workers" %}
+{% include "_tab_error.html" %}
+{% elif profile %}
+<header class="view-head">
+  <p class="eyebrow">
+    {% if profile.kind == "bot" %}<a href="/?tab=bots">Bots</a>
+    {% elif profile.kind == "scheduler" %}<a href="/?tab=workers">Workers · Schedulers</a>
+    {% else %}<a href="/?tab=workers">Workers</a>{% endif %}
+    · Profile
+  </p>
+  <h2>{{ profile.name }}</h2>
+  <p>{{ profile.role or profile.kind }}</p>
+</header>
+
+<section class="panel profile-page">
+  <p class="profile-summary">{{ profile.profile_summary or profile.description }}</p>
+
+  <dl class="profile-dl">
+    <div><dt>Source</dt><dd>{{ profile.source_name or "—" }}</dd></div>
+    <div><dt>Origin</dt><dd>{{ profile.origin or "—" }}</dd></div>
+    {% if profile.env_name %}<div><dt>Env key</dt><dd><code>{{ profile.env_name }}</code></dd></div>{% endif %}
+    <div><dt>Connected</dt><dd>{{ profile.conn or ("Connected" if profile.connected else "Not connected") }}</dd></div>
+    {% if profile.status_label %}<div><dt>Run state</dt><dd>{{ profile.status_label }}</dd></div>{% endif %}
+    {% if profile.leads_found is not none %}<div><dt>Leads found</dt><dd>{{ profile.leads_found }}</dd></div>{% endif %}
+    {% if profile.free_tier %}<div><dt>Free tier</dt><dd>{{ profile.free_tier }}</dd></div>{% endif %}
+    {% if profile.progress_note %}<div><dt>Progress</dt><dd>{{ profile.progress_note }}</dd></div>{% endif %}
+    {% if profile.reason %}<div><dt>Note</dt><dd>{{ profile.reason }}</dd></div>{% endif %}
+    {% if profile.last_error %}<div><dt>Last error</dt><dd>{{ profile.last_error }}</dd></div>{% endif %}
+    {% if profile.setup %}<div><dt>Setup</dt><dd class="pre">{{ profile.setup }}</dd></div>{% endif %}
+    {% if profile.how_to %}<div><dt>How to connect</dt><dd class="pre">{{ profile.how_to }}</dd></div>{% endif %}
+  </dl>
+
+  <div class="link-row">
+    {% if profile.source_url %}<a class="button primary" href="{{ profile.source_url }}" target="_blank" rel="noopener">Website</a>{% endif %}
+    {% if profile.docs_url %}<a class="button" href="{{ profile.docs_url }}" target="_blank" rel="noopener">Docs</a>{% endif %}
+    {% if profile.console_url %}<a class="button" href="{{ profile.console_url }}" target="_blank" rel="noopener">Console</a>{% endif %}
+    {% if profile.signup_url and profile.signup_url != profile.source_url %}<a class="button" href="{{ profile.signup_url }}" target="_blank" rel="noopener">{{ profile.signup_label or "Sign up" }}</a>{% endif %}
+    {% if profile.kind == "bot" and profile.key %}<a class="button" href="/bots/{{ profile.key }}">Live bot page</a>{% endif %}
+  </div>
+
+  <h3 class="profile-section-title">Usage &amp; remaining</h3>
+  {% if profile.limit != none and profile.used != none %}
+  {% set pct = profile.pct_used or 0 %}
+  <div class="usage-inline">
+    <div class="bar {% if pct >= 85 %}hot{% elif pct >= 60 %}warn{% endif %}"><span style="width:{{ pct if pct > 4 else 4 }}%"></span></div>
+    <div class="usage-meta"><span>{{ profile.used }} / {{ profile.limit }}</span></div>
+    <div class="usage-reset">
+      <span>{{ profile.quota_title or profile.free_tier }}</span>
+      {% if profile.reset_in %}<span>Resets in {{ profile.reset_in }}</span>{% endif %}
+    </div>
+  </div>
+  {% if profile.quota_detail %}<p class="hint">{{ profile.quota_detail }}</p>{% endif %}
+  {% else %}
+  <p class="usage-none">{{ profile.quota_title or profile.free_tier or "No usage cap on this item" }}</p>
+  {% endif %}
+</section>
+
+{% if siblings and siblings|length > 1 %}
+<section class="panel">
+  <h2 class="section-title">Related</h2>
+  <ul class="mod-list">
+    {% for s in siblings %}
+    <li>
+      {% if s.key == profile.key %}
+      <strong>{{ s.name }}</strong> <span class="muted">(this)</span>
+      {% else %}
+      <a href="/profiles/{{ s.kind }}/{{ s.key }}">{{ s.name }}</a>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% else %}
+{% set error_title = "Not found" %}
+{% set error_detail = "That profile does not exist." %}
+{% set retry_href = "/?tab=workers" %}
+{% include "_tab_error.html" %}
+{% endif %}
+{% endblock %}

@@ -20,6 +20,7 @@ async function dispatch(env) {
   if (!token || !repo) {
     return;
   }
+  const trade = (env.TRADE_PRESET || "all").trim() || "all";
   await fetch(`https://api.github.com/repos/${repo}/actions/workflows/collect.yml/dispatches`, {
     method: "POST",
     headers: {
@@ -29,6 +30,6 @@ async function dispatch(env) {
       "User-Agent": "Leadlane-cloudflare-trigger",
       "X-GitHub-Api-Version": "2022-11-28",
     },
-    body: JSON.stringify({ ref }),
+    body: JSON.stringify({ ref, inputs: { trade_preset: trade } }),
   });
 }

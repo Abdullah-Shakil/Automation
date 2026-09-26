@@ -160,7 +160,7 @@ def test_overpass_parser_and_tiles():
 
 
 def test_serper_organic_parser():
-    from app.sources.serper import parse_serper_organic
+    from app.sources.serper import parse_serper_organic, parse_serper_places
 
     leads = parse_serper_organic(
         {
@@ -168,7 +168,7 @@ def test_serper_organic_parser():
                 {
                     "title": "River Plumbing - Barnes",
                     "link": "https://river.example/",
-                    "snippet": "Boiler repairs in London SW13 9LW",
+                    "snippet": "Boiler repairs in London SW13 9LW. Call 020 7946 0958 or email hello@river.example",
                 }
             ]
         },
@@ -177,3 +177,44 @@ def test_serper_organic_parser():
     assert leads[0].business_name == "River Plumbing"
     assert leads[0].postcode == "SW13 9LW"
     assert leads[0].website == "https://river.example/"
+    assert leads[0].phone == "02079460958"
+    assert leads[0].email == "hello@river.example"
+
+    places = parse_serper_places(
+        {
+            "places": [
+                {
+                    "title": "Barnes Plumbers Ltd",
+                    "address": "1 High Street, London SW13 9LW",
+                    "phoneNumber": "020 7946 0100",
+                    "website": "https://barnes-plumbers.example/",
+                    "category": "Plumber",
+                    "cid": "abc123",
+                }
+            ]
+        },
+        "Plumbers",
+    )
+    assert places[0].business_name == "Barnes Plumbers Ltd"
+    assert places[0].website == "https://barnes-plumbers.example/"
+    assert places[0].phone
+    assert places[0].town
+    assert places[0].postcode == "SW13 9LW"
+
+
+def test_junk_hosts_are_skipped():
+    from app.sources.serper import parse_serper_organic
+
+    leads = parse_serper_organic(
+        {
+            "organic": [
+                {
+                    "title": "How to become a plumber",
+                    "link": "https://www.quora.com/how-to-become",
+                    "snippet": "Advice",
+                }
+            ]
+        },
+        "Plumbers",
+    )
+    assert leads == []
