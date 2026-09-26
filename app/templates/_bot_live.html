@@ -1,0 +1,66 @@
+<section class="panel">
+  <div class="panel-head"><h2>What this bot collects</h2></div>
+  <p class="blurb">{{ describe_bot(bot) }}</p>
+</section>
+<section class="job-status">
+  <p><span class="pill pill-{{ bot.status }}">{{ status_label(bot.status) }}</span></p>
+  <p class="progress">{{ bot.progress_note or "Waiting for the worker." }}</p>
+  <p class="worker {% if worker.online %}is-on{% else %}is-off{% endif %}">{{ worker.detail }}</p>
+  {% if bot.last_error %}
+  <p class="last-error">{{ bot.last_error }}</p>
+  {% endif %}
+  <h2>Performance</h2>
+  <dl class="stats">
+    <div><dt>Leads found</dt><dd>{{ bot.leads_found }}</dd></div>
+    <div><dt>New</dt><dd>{{ bot.leads_found }}</dd></div>
+    <div><dt>Duplicates</dt><dd>{{ bot.duplicates_found }}</dd></div>
+    <div><dt>Requests</dt><dd>{{ bot.requests_made }}</dd></div>
+    <div><dt>Success rate</dt><dd>{{ success_rate(bot) }}</dd></div>
+    <div><dt>Failure rate</dt><dd>{{ failure_rate(bot) }}</dd></div>
+    <div><dt>Run time</dt><dd>{{ format_duration(bot.run_seconds) }}</dd></div>
+    <div><dt>Last run</dt><dd>{{ format_dt(bot.last_run_at) }}</dd></div>
+    <div><dt>Leads per hour</dt><dd>{{ leads_per_hour(bot) }}</dd></div>
+    {% if quota %}
+    <div><dt>Quota used</dt><dd>{{ quota.used }} / {{ quota.limit }}</dd></div>
+    <div><dt>Quota resets</dt><dd>{{ format_dt(quota.reset_at) }}</dd></div>
+    {% endif %}
+  </dl>
+  {% if quota %}
+  <p class="hint">{{ quota.label }} free allowance: {{ quota.title }} ({{ quota.period }}). {{ quota.detail }}</p>
+  {% endif %}
+  <div class="actions">
+    {% if bot.status != "running" %}
+    <form method="post" action="/bots/{{ bot.id }}/start">
+      <button type="submit" class="primary">Start</button>
+    </form>
+    {% endif %}
+    {% if bot.status == "running" %}
+    <form method="post" action="/bots/{{ bot.id }}/pause">
+      <button type="submit">Pause</button>
+    </form>
+    {% endif %}
+    {% if bot.status in ["running", "paused", "limit_reached"] %}
+    <form method="post" action="/bots/{{ bot.id }}/stop">
+      <button type="submit" class="danger">Stop</button>
+    </form>
+    {% endif %}
+  </div>
+</section>
+<section class="panel">
+  <div class="panel-head">
+    <h2>Errors</h2>
+    <p>{{ error_count }} error{{ "" if error_count == 1 else "s" }}</p>
+  </div>
+  {% if logs %}
+  <ol class="log">
+    {% for entry in logs %}
+    <li>
+      <time datetime="{{ entry.created_at.isoformat() }}">{{ format_dt(entry.created_at) }}</time>
+      <span class="level-{{ entry.level }}">{{ entry.message }}</span>
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <p class="empty">No log lines yet.</p>
+  {% endif %}
+</section>

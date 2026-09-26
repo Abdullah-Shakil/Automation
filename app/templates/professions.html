@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Professions · Leadlane{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <p class="eyebrow">Professions</p>
+    <h1>Trades you want to find</h1>
+  </div>
+  <form method="post" action="/professions/restore">
+    <button type="submit">Restore built-ins</button>
+  </form>
+</header>
+<p class="lede">SIC codes are used for Companies House. OpenStreetMap tags look like <code>craft=plumber</code>. Keywords are the fallback search terms.</p>
+<section class="panel">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Keywords</th>
+          <th>SIC</th>
+          <th>OpenStreetMap</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for profession in professions %}
+        <tr>
+          <td>{{ profession.label }}{% if profession.is_builtin %} <span class="pill">Built-in</span>{% endif %}</td>
+          <td>{{ profession.keywords | join(", ") }}</td>
+          <td>{{ profession.sic_codes | join(", ") or "—" }}</td>
+          <td>
+            {% for tag in profession.osm_tags %}{{ tag.key }}={{ tag.value }}{% if not loop.last %}, {% endif %}{% else %}—{% endfor %}
+          </td>
+          <td>
+            <form method="post" action="/professions/{{ profession.slug }}/delete">
+              <button type="submit" class="text">Remove</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+<section class="panel">
+  <div class="panel-head"><h2>Add a profession</h2></div>
+  <form method="post" action="/professions" class="stack">
+    <label for="label">Name</label>
+    <input id="label" name="label" required maxlength="80" placeholder="Glaziers">
+    <label for="keywords">Keywords</label>
+    <input id="keywords" name="keywords" placeholder="glazier, glazing">
+    <label for="sic_codes">SIC codes</label>
+    <input id="sic_codes" name="sic_codes" placeholder="43342">
+    <label for="osm_tags">OpenStreetMap tags</label>
+    <input id="osm_tags" name="osm_tags" placeholder="craft=glazier">
+    <button type="submit" class="primary">Add</button>
+  </form>
+</section>
+{% endblock %}

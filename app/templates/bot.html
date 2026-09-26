@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}{{ bot.name or source_label(bot.source) }} · Leadlane{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <p class="eyebrow"><a href="/?tab=bots">Bots</a></p>
+    <h1>{{ bot.name or source_label(bot.source) }}</h1>
+    <p class="lede">England · {{ source_label(bot.source) }} · {{ profession_list(bot) }}</p>
+  </div>
+</header>
+<div data-poll="/partials/bots/{{ bot.id }}">
+  {% include "_bot_live.html" %}
+</div>
+{% endblock %}

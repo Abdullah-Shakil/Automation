@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Leadlane{% endblock %}</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560;9..144,650&family=Outfit:wght@380;480;560&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="/">
+        <span class="mark" aria-hidden="true"></span>
+        <span>Leadlane</span>
+      </a>
+      <p class="brand-note">This PC shows the records. Collection runs in the cloud.</p>
+      <nav>
+        <a href="/?tab=workers" class="{% if active == 'dashboard' %}is-current{% endif %}">Workers</a>
+        <a href="/leads" class="{% if active == 'leads' %}is-current{% endif %}">Leads</a>
+        <a href="/professions" class="{% if active == 'professions' %}is-current{% endif %}">Professions</a>
+      </nav>
+    </aside>
+    <main>
+      {% if notice %}
+      <p class="flash flash-info" role="status">{{ notice }}</p>
+      {% endif %}
+      {% block content %}{% endblock %}
+      <footer>
+        Company records from Companies House under the Open Government Licence.
+        Map data © OpenStreetMap contributors, ODbL.
+      </footer>
+    </main>
+  </div>
+  <script>
+    (function () {
+      const region = document.querySelector("[data-poll]");
+      if (!region) return;
+      const url = region.getAttribute("data-poll");
+      async function refresh() {
+        try {
+          const response = await fetch(url, { headers: { "Accept": "text/html" } });
+          if (!response.ok) return;
+          region.innerHTML = await response.text();
+        } catch (error) {
+          /* Leave the last good markup in place. */
+        }
+      }
+      setInterval(refresh, 4000);
+    })();
+  </script>
+</body>
+</html>

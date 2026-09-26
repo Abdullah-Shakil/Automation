@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}{{ lead.business_name }} · Leadlane{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <p class="eyebrow"><a href="/leads">Leads</a></p>
+    <h1>{{ lead.business_name }}</h1>
+    {% if lead.trading_name %}<p class="lede">Trading as {{ lead.trading_name }}</p>{% endif %}
+  </div>
+</header>
+<dl class="company">
+  <div><dt>Company number</dt><dd>{{ lead.company_number or "—" }}</dd></div>
+  <div><dt>Company type</dt><dd>{{ lead.company_type or "—" }}</dd></div>
+  <div><dt>Status</dt><dd>{{ lead.company_status or "—" }}</dd></div>
+  <div><dt>Trade</dt><dd>{{ lead.category or lead.profession or "—" }}</dd></div>
+  <div><dt>SIC codes</dt><dd>{{ lead.sic_codes or "—" }}</dd></div>
+  <div><dt>Incorporated</dt><dd>{{ lead.incorporated_on or "—" }}</dd></div>
+  <div><dt>Landline</dt><dd>{{ lead.phone or "—" }}</dd></div>
+  <div><dt>Mobile</dt><dd>{{ lead.mobile or "—" }}</dd></div>
+  <div><dt>Email</dt><dd>{{ lead.email or "—" }}</dd></div>
+  <div><dt>Website</dt><dd>{% if lead.website %}<a href="{{ lead.website }}" rel="noreferrer">{{ lead.website }}</a>{% else %}—{% endif %}</dd></div>
+  <div><dt>Address</dt><dd>{{ lead.address or "—" }}</dd></div>
+  <div><dt>Address line 1</dt><dd>{{ lead.address_line1 or "—" }}</dd></div>
+  <div><dt>Address line 2</dt><dd>{{ lead.address_line2 or "—" }}</dd></div>
+  <div><dt>Town</dt><dd>{{ lead.town or "—" }}</dd></div>
+  <div><dt>County</dt><dd>{{ lead.county or "—" }}</dd></div>
+  <div><dt>Postcode</dt><dd>{{ lead.postcode or "—" }}</dd></div>
+  <div><dt>Description</dt><dd>{{ lead.description or "—" }}</dd></div>
+  <div><dt>Officers</dt><dd class="pre">{{ lead.officers if lead.officers is not none and lead.officers != "" else "—" }}</dd></div>
+  <div><dt>Social profiles</dt><dd class="pre">{{ lead.social_links or "—" }}</dd></div>
+  <div><dt>Sources</dt><dd>{{ lead.sources or source_label(lead.primary_source) }}</dd></div>
+  <div><dt>Source URLs</dt><dd class="pre">{{ lead.source_urls or lead.primary_source_url or "—" }}</dd></div>
+  <div><dt>Found</dt><dd>{{ format_dt(lead.date_found) }}</dd></div>
+  <div><dt>Last updated</dt><dd>{{ format_dt(lead.updated_at) }}</dd></div>
+  <div><dt>Website read</dt><dd>{{ format_dt(lead.enriched_at) if lead.enriched_at else "Not yet" }}</dd></div>
+  {% if lead.enrichment_error %}<div><dt>Enrichment note</dt><dd>{{ lead.enrichment_error }}</dd></div>{% endif %}
+</dl>
+{% endblock %}
