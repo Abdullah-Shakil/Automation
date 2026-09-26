@@ -7,14 +7,13 @@
     <h1>Collect companies while you're away</h1>
   </div>
 </header>
-<p class="lede">Add a bot with a profession, an area, and a source. It runs in the background until that source's free quota is used, then pauses and carries on when the quota resets. Closing the browser does not stop it.</p>
+<p class="lede">Add a bot with a profession, an area, and a source. It runs until that source's free quota is used, then pauses and carries on when the quota resets. With this PC off, the scheduled cloud worker keeps going.</p>
 
 <section class="panel start-panel">
   <div class="panel-head">
     <h2>Add a bot</h2>
   </div>
   <form method="post" action="/bots" class="stack">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <fieldset>
       <legend>Professions</legend>
       <div class="checks">

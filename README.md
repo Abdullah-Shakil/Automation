@@ -1,12 +1,14 @@
 # Leadlane
 
-Leadlane stores UK company records for trades you choose: plumbers, gardeners, solicitors, electricians, painters, and any profession you add. Each **bot** is one collection: professions, an area, and a data source. A background worker runs the bot until that source's free quota is used, then pauses and continues when the quota resets. Closing the browser does not stop it.
+Leadlane stores UK company records for trades you choose: plumbers, gardeners, solicitors, electricians, painters, and any profession you add. Each **bot** is one collection: professions, an area, and a data source. The bot runs until that source's free quota is used, then pauses and continues when the quota resets.
 
-Records stay in the database. There is no email drafting and no CSV export.
+The dashboard runs on your PC and does not ask you to sign in. The collector is a scheduled GitHub Actions job, so bots keep working with the PC off. Both talk to the same free cloud Postgres. Records stay in that database. There is no email drafting and no CSV export.
 
-## Run it locally
+Do not expose the dashboard on the public internet. There is no login.
 
-Python 3.12.
+## Run the dashboard on this PC
+
+Python 3.12. For a trial with everything on one machine, leave `DATABASE_URL` on SQLite and start a local worker as well. To collect with the PC off, point `DATABASE_URL` at the cloud database from the next section and do not rely on the local worker.
 
 ```bash
 python3 -m venv .venv
@@ -14,23 +16,73 @@ source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 mkdir -p data
-python -m app.worker
-```
-
-In a second terminal, with the same virtualenv:
-
-```bash
-source .venv/bin/activate
 uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Open http://127.0.0.1:8000 and sign in with `admin` / `changeme`. Add a bot, then leave the page. The worker keeps going. Stop and start from the bot's page; the saved position is kept.
+Open http://127.0.0.1:8000. Add a bot, then start and stop it from its page. The saved position is kept.
 
-Local SQLite is enough when the website and the worker are on the same machine. Use Postgres when they are separate processes.
+Optional local worker, same database as the dashboard:
+
+```bash
+source .venv/bin/activate
+python -m app.worker
+```
 
 ```bash
 pytest
 ```
+
+## Cloud database and scheduled worker
+
+The dashboard stays on your PC. Postgres and the worker do not.
+
+**Neon** is the database to use. The free plan suspends compute when it is idle and wakes on the next connection, which suits a dashboard you open sometimes and a job that runs every few hours. **Supabase** free Postgres also works, but a free project pauses after about a week without activity. The schedule below keeps it awake only while GitHub Actions keeps running.
+
+GitHub Actions runs the worker. On a private repository the free plan includes 2,000 minutes a month. The workflow is every 3 hours, exits when nothing is due, and stops after 8 minutes if bots are still running. That stays inside the allowance when runs are short. A public repository currently includes Actions minutes for public use; check the repository billing page if you are close to a cap. Scheduled runs can be delayed or skipped. Bot status, checkpoints, leads, errors, and quotas live in Postgres, so the next run continues where the last one stopped. This is periodic collection, not a process that sits in a loop all day.
+
+These were not used for the website, because the dashboard is local:
+
+- Render and Railway free web services sleep, and a separate worker is not included free.
+- Koyeb's free instance is one small service, not a separate scheduled worker.
+- An Oracle Cloud Always Free VM can run all day (Ampere A1 at 2 OCPUs and 12 GB, or a 1 GB AMD micro), but capacity is often unavailable and the instance is more work than this setup.
+
+### 1. Create the free database
+
+1. Create a [Neon](https://neon.tech) account and a free project. Copy the connection string. It looks like `postgresql://USER:PASSWORD@HOST/neondb?sslmode=require`.
+2. Or create a [Supabase](https://supabase.com) project and copy the URI from Project Settings → Database. Prefer the session pooler URI if Supabase shows one. Keep `sslmode=require`.
+
+Leadlane rewrites `postgres://` and `postgresql://` to `postgresql+psycopg://`. You can paste the host's string as-is.
+
+### 2. Point the dashboard at it
+
+In `.env` on your PC:
+
+```bash
+DATABASE_URL=postgresql://USER:PASSWORD@HOST/neondb?sslmode=require
+USER_AGENT=Leadlane/1.0 (UK small-business research; contact: you@yourdomain)
+COMPANIES_HOUSE_API_KEY=
+GOOGLE_PLACES_ENABLED=false
+```
+
+`USER_AGENT` must not use `example.com`. Nominatim and Wikidata reject that.
+
+Start the dashboard with `uvicorn` bound to `127.0.0.1` only, as above. Add a bot. Nothing collects until a worker runs.
+
+### 3. Schedule the worker
+
+1. Push this repo to GitHub.
+2. Settings → Secrets and variables → Actions. Add:
+   - `DATABASE_URL` — the same string as on your PC
+   - `USER_AGENT` — the same identifying string
+   - `COMPANIES_HOUSE_API_KEY` — optional; leave the secret empty or omit it
+   - `GOOGLE_PLACES_ENABLED` — `false` unless you accept the charge risk below
+   - `GOOGLE_PLACES_API_KEY` — only if you enabled Places
+   - `DIRECTORY_SEARCH_URL_TEMPLATE` — optional
+3. Actions → Collect → enable workflows if GitHub asks. The file `.github/workflows/collect.yml` runs every 3 hours and can also be started with "Run workflow".
+4. Run it once by hand. The log should say the worker started and, if a bot is running, that it took a step. Then close your PC. The next scheduled run continues that bot until the source quota is used, and resumes after the quota resets.
+5. Open the dashboard later. It reads the same database: leads, the bot's error log, and performance.
+
+`docker-compose.yml` is only for trying the web process, a worker, and Postgres together on your PC. It is not the cloud setup, and it should not be published to the internet.
 
 ## What a bot stores
 
@@ -65,90 +117,6 @@ Google Places stays **off** until `GOOGLE_PLACES_ENABLED=true` and `GOOGLE_PLACE
 Since March 2025 the old $200 monthly credit is a free call allowance per SKU: about 10,000 Essentials, 5,000 Pro, and 1,000 Enterprise calls a month. Requesting a phone number or website makes Text Search an **Enterprise** call. Leadlane asks for those fields, so the bot stops at 1,000 requests a month (midnight Pacific time), inside that free allowance.
 
 Past that cap, Google charges. Other Google products on the same project can charge even if this bot is inside its cap. Leave the source off unless you have checked the [Maps Platform pricing](https://developers.google.com/maps/billing-and-pricing/pricing) page and accept that.
-
-## Deploy so it runs with your PC off
-
-The reliable free setup is an **Oracle Cloud Always Free** virtual machine. The website, the worker, and Postgres all run on that VM via Docker Compose. The VM stays up when your computer is off.
-
-Checked against Oracle's Always Free documentation: an Always Free tenancy can run Ampere A1 (Arm) at **2 OCPUs and 12 GB RAM** total (1,500 OCPU-hours and 9,000 GB-hours a month), or up to two AMD micro instances (1 GB RAM each), plus 200 GB of block storage. Stay inside 2 OCPU / 12 GB. A larger shape on a paid account can be billed. Creating an Arm instance often fails with "out of host capacity"; retry another availability domain or time of day. The AMD micro shape is a smaller fallback and is tight for Postgres plus two Python processes.
-
-These were not chosen as the always-on path:
-
-- **Render and Railway free web services sleep**, and a separate worker is not included free. A sleeping site cannot keep collection running.
-- **Koyeb's free instance** is one small service, not a durable separate worker.
-- **GitHub Actions plus Neon or Supabase** can run collection in bursts. Actions minutes on a private repository are capped (2,000 a month), scheduled runs can be skipped or delayed, Supabase free projects pause after about a week without use, and Neon compute suspends until the next connection. The workflow in `.github/workflows/collect.yml` is a manual fallback (`workflow_dispatch`, `python -m app.worker --max-seconds 480`), not the way to keep bots running all day. Point `DATABASE_URL` at the free Postgres if you use it. The website still needs a host; the Oracle VM already provides one.
-
-`python:3.12-slim` runs on Arm and AMD.
-
-### 1. Create the VM
-
-1. Create an Oracle Cloud account and open the Always Free path. Do not upgrade the shape past the free allowance.
-2. Create a VCN with a public subnet if the wizard offers one.
-3. Create a compute instance:
-   - Image: Ubuntu 22.04 or 24.04, the **aarch64** build if you chose Ampere.
-   - Shape: `VM.Standard.A1.Flex` with **2 OCPUs and 12 GB** (or less, still inside the free total). If capacity is unavailable, try another availability domain, or `VM.Standard.E2.1.Micro`.
-   - Add your SSH public key.
-   - Assign a public IP.
-4. In the subnet **security list** (and the network security group, if you created one), add an ingress rule: TCP port **8000**, source `0.0.0.0/0`. Port 22 should already be open for SSH.
-5. Note the public IP.
-
-### 2. Open port 8000 on the instance itself
-
-Oracle's security list is not enough. Ubuntu also filters ports.
-
-```bash
-ssh ubuntu@YOUR_PUBLIC_IP
-sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 8000 -j ACCEPT
-sudo apt-get update
-sudo apt-get install -y iptables-persistent
-sudo netfilter-persistent save
-```
-
-If `iptables-persistent` asks to save current rules, say yes. Confirm with `sudo iptables -L INPUT -n | head`.
-
-### 3. Install Docker
-
-```bash
-sudo apt-get install -y ca-certificates curl
-sudo install -m 0755 -d /etc/apt/keyrings
-sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-sudo chmod a+r /etc/apt/keyrings/docker.asc
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-sudo apt-get update
-sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
-sudo usermod -aG docker ubuntu
-```
-
-Log out and back in so the `docker` group applies.
-
-### 4. Configure and start
-
-```bash
-git clone YOUR_REPOSITORY_URL leadlane
-cd leadlane
-cp .env.example .env
-python3 -c "import secrets; print(secrets.token_urlsafe(48))"
-```
-
-Edit `.env`:
-
-- `ENVIRONMENT=production`
-- `SECRET_KEY` to the random string you just printed
-- `ADMIN_USERNAME` and `ADMIN_PASSWORD` to something that is not `admin` / `changeme`
-- `USER_AGENT` to a name plus a contact address you control
-- `COMPANIES_HOUSE_API_KEY` if you want that source
-- Leave `GOOGLE_PLACES_ENABLED=false` unless you accept the charge risk
-
-`docker-compose.yml` points the web and worker at Postgres on the VM and overrides `DATABASE_URL`. The database volume survives restarts.
-
-```bash
-docker compose up -d --build
-docker compose ps
-```
-
-Open `http://YOUR_PUBLIC_IP:8000`. Sign in, add a bot, and confirm the worker line says it is running. `docker compose logs -f worker` shows each step. `docker compose restart` keeps bot status, checkpoints, leads, and quotas because they live in Postgres.
-
-To update later: `git pull` and `docker compose up -d --build`.
 
 ## Sources in more detail
 

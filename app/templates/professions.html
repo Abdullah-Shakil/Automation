@@ -7,7 +7,6 @@
     <h1>Trades you want to find</h1>
   </div>
   <form method="post" action="/professions/restore">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button type="submit">Restore built-ins</button>
   </form>
 </header>
@@ -35,7 +34,6 @@
           </td>
           <td>
             <form method="post" action="/professions/{{ profession.slug }}/delete">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
               <button type="submit" class="text">Remove</button>
             </form>
           </td>
@@ -48,7 +46,6 @@
 <section class="panel">
   <div class="panel-head"><h2>Add a profession</h2></div>
   <form method="post" action="/professions" class="stack">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label for="label">Name</label>
     <input id="label" name="label" required maxlength="80" placeholder="Glaziers">
     <label for="keywords">Keywords</label>

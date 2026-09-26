@@ -1,12 +1,13 @@
 name: Collect
 
-# Fallback only. This does not keep a worker running between invocations.
-# The always-on path is an Oracle Cloud Always Free VM. See the README.
-# A private GitHub repo includes 2,000 Actions minutes a month. An hourly run
-# that lasts several minutes will use that up. Leave the schedule commented
-# out unless the repository is public, or run it by hand with workflow_dispatch.
+# The dashboard stays on the owner's PC. This job is the collector.
+# It runs every 3 hours, and also when started by hand.
+# A private repository includes 2,000 GitHub Actions minutes a month.
+# The worker exits when nothing is due, so an idle run stays short.
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "17 */3 * * *"
 
 jobs:
   collect:
@@ -17,13 +18,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
       - run: pip install -r requirements.txt
       - run: python -m app.worker --max-seconds 480
         env:
-          ENVIRONMENT: production
-          SECRET_KEY: ${{ secrets.SECRET_KEY }}
-          ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
-          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           USER_AGENT: ${{ secrets.USER_AGENT }}
           COMPANIES_HOUSE_API_KEY: ${{ secrets.COMPANIES_HOUSE_API_KEY }}

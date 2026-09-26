@@ -1,4 +1,3 @@
-import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -7,10 +6,8 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.config import get_settings, insecure_defaults, normalize_database_url
+from app.config import get_settings, normalize_database_url
 from app.models import Base
-
-logger = logging.getLogger(__name__)
 
 _engine: Engine | None = None
 _Session: sessionmaker[Session] | None = None
@@ -75,14 +72,6 @@ def session_scope() -> Iterator[Session]:
 def init_db() -> None:
     from app.seed import seed
 
-    settings = get_settings()
-    problems = insecure_defaults(settings)
-    if problems and settings.environment.lower() != "production":
-        logger.warning(
-            "Using default %s. Fine on your own machine. Set ENVIRONMENT=production "
-            "only after replacing them, or the app will refuse to start.",
-            ", ".join(problems),
-        )
     get_engine()
     Base.metadata.create_all(get_engine())
     with session_scope() as db:

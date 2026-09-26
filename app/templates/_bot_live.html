@@ -31,19 +31,16 @@
   <div class="actions">
     {% if bot.status != "running" %}
     <form method="post" action="/bots/{{ bot.id }}/start">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button type="submit" class="primary">Start</button>
     </form>
     {% endif %}
     {% if bot.status == "running" %}
     <form method="post" action="/bots/{{ bot.id }}/pause">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button type="submit">Pause</button>
     </form>
     {% endif %}
     {% if bot.status in ["running", "paused", "limit_reached"] %}
     <form method="post" action="/bots/{{ bot.id }}/stop">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button type="submit" class="danger">Stop</button>
     </form>
     {% endif %}

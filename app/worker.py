@@ -3,7 +3,7 @@ import logging
 import signal
 import time
 
-from app.config import assert_production_config, get_settings
+from app.config import get_settings
 from app.db import init_db, session_scope
 from app.services.runner import tick
 from app.sources.registry import default_registry
@@ -20,7 +20,6 @@ def _handle_stop(signum, _frame) -> None:
 
 def run_forever(max_seconds: float = 0) -> None:
     settings = get_settings()
-    assert_production_config(settings)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
@@ -39,6 +38,9 @@ def run_forever(max_seconds: float = 0) -> None:
             with session_scope() as db:
                 action = tick(db, settings, default_registry)
             logger.debug("Tick %s", action)
+            if deadline is not None and action == "idle":
+                logger.info("Nothing is due. Exiting this scheduled run.")
+                break
         except Exception:
             logger.exception("Tick failed")
         slept = 0.0
@@ -55,7 +57,7 @@ def main() -> None:
         "--max-seconds",
         type=float,
         default=0,
-        help="Exit after this many seconds. Used by a scheduled fallback runner. 0 means run until signalled.",
+        help="Exit after this many seconds, or sooner when nothing is due. Used by GitHub Actions. 0 means run until signalled.",
     )
     args = parser.parse_args()
     signal.signal(signal.SIGTERM, _handle_stop)

@@ -1,9 +1,8 @@
 from datetime import datetime, timedelta, timezone
 
-import pytest
 from sqlalchemy import func, select
 
-from app.config import assert_production_config, get_settings
+from app.config import get_settings
 from app.db import session_scope
 from app.models import Bot, Lead, UsageWindow, WorkerHeartbeat
 from app.services.runner import tick
@@ -347,12 +346,6 @@ def test_has_capacity_treats_the_cap_as_inclusive_until_it_is_reached():
     assert has_capacity(window, quota, 1) is True
     window.requests_used = 2
     assert has_capacity(window, quota, 1) is False
-
-
-def test_production_refuses_default_secrets():
-    settings = _settings(environment="production", admin_password="changeme", secret_key="dev-only-change-me")
-    with pytest.raises(SystemExit):
-        assert_production_config(settings)
 
 
 def test_ensure_window_is_stable_within_a_day_and_changes_after_midnight():

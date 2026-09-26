@@ -71,7 +71,7 @@ def build_query(keyword: str, place: str, offset: int) -> str:
     return f"""
 SELECT ?item ?itemLabel ?desc ?website ?phone ?address WHERE {{
   SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en". }}
-  ?item wdt:P31/wdt:P279* wd:Q4830453 .
+  ?item wdt:P31 wd:Q4830453 .
   ?item wdt:P17 wd:Q145 .
   ?item rdfs:label ?itemLabel .
   FILTER(LANG(?itemLabel) = "en")
@@ -92,8 +92,8 @@ class WikidataAdapter(SourceAdapter):
     key = "wikidata"
     label = "Wikidata"
     description = (
-        "UK organisations on Wikidata whose English name contains the trade and whose "
-        "name, description, or address mentions the place. No API key. "
+        "UK businesses on Wikidata (recorded as a business, in the United Kingdom) whose English name contains the trade "
+        "and whose name, description, or address mentions the place. No API key. "
         "Small local trades are rarely in Wikidata; well-known firms are more likely."
     )
     quota = SourceQuota(

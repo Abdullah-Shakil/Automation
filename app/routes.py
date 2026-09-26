@@ -1,11 +1,10 @@
 from datetime import datetime, timezone
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, select
 
-from app.auth import credentials_ok, csrf_ok, ensure_csrf, flash, pop_flash
 from app.config import Settings, get_settings
 from app.db import session_scope
 from app.models import Bot, BotLog, Lead, Profession, WorkerHeartbeat
@@ -24,17 +23,22 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _render(request: Request, name: str, context: dict, status_code: int = 200, consume_flash: bool = True):
+def _render(request: Request, name: str, context: dict, status_code: int = 200):
     context = dict(context)
-    context["flash"] = pop_flash(request) if consume_flash else None
-    context["csrf_token"] = ensure_csrf(request)
+    context["notice"] = request.query_params.get("notice")
     context["request"] = request
     return templates.TemplateResponse(request, name, context, status_code=status_code)
 
 
-def _bad_form(request: Request, fallback: str, message: str):
-    flash(request, message, "error")
-    return RedirectResponse(fallback, status_code=303)
+def _go(path: str, notice: str | None = None):
+    if notice:
+        join = "&" if "?" in path else "?"
+        path = f"{path}{join}notice={quote(notice)}"
+    return RedirectResponse(path, status_code=303)
+
+
+def _bad_form(_request: Request, fallback: str, message: str):
+    return _go(fallback, message)
 
 
 async def _form(request: Request):
@@ -47,15 +51,15 @@ def _worker_view(db, settings: Settings, now: datetime) -> dict:
         return {
             "online": False,
             "last_seen": None,
-            "detail": "The background worker has not reported in yet. Start it with python -m app.worker.",
+            "detail": "The background worker has not reported in yet. On this PC that is python -m app.worker. With the PC off, the scheduled GitHub Actions run does the work.",
         }
     last = as_utc(row.last_seen)
     stale_after = max(30.0, settings.worker_poll_seconds * 4)
     online = last is not None and (now - last).total_seconds() <= stale_after
     if online:
-        detail = "The worker is running on the server. You can close this browser."
+        detail = "A worker reported in just now. With the cloud database, the GitHub Actions schedule keeps going after you close this PC."
     else:
-        detail = "The worker looks stopped. Bots will not move until the worker process is running again."
+        detail = "The worker looks stopped. Bots continue on the next scheduled GitHub Actions run, or when python -m app.worker is running on this PC."
     return {"online": online, "last_seen": last, "detail": detail}
 
 
@@ -154,37 +158,6 @@ def _filter_query(filters: LeadFilters, page: int | None = None) -> str:
     return urlencode(pairs)
 
 
-@router.get("/login", response_class=HTMLResponse)
-def login_form(request: Request):
-    if request.session.get("authenticated"):
-        return RedirectResponse("/", status_code=303)
-    return _render(request, "login.html", {})
-
-
-@router.post("/login")
-async def login_submit(request: Request):
-    form = await _form(request)
-    if not csrf_ok(request, form.get("csrf_token")):
-        return _bad_form(request, "/login", "The form expired. Try again.")
-    username = str(form.get("username") or "")
-    password = str(form.get("password") or "")
-    settings = get_settings()
-    if not credentials_ok(settings, username, password):
-        flash(request, "Those details don't match.", "error")
-        return RedirectResponse("/login", status_code=303)
-    request.session["authenticated"] = True
-    return RedirectResponse("/", status_code=303)
-
-
-@router.post("/logout")
-async def logout(request: Request):
-    form = await _form(request)
-    if not csrf_ok(request, form.get("csrf_token")):
-        return _bad_form(request, "/", "The form expired. Try again.")
-    request.session.clear()
-    return RedirectResponse("/login", status_code=303)
-
-
 @router.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
     settings = get_settings()
@@ -213,15 +186,12 @@ def dashboard_partial(request: Request):
             request,
             "_live.html",
             {**_live_context(db, settings), "active": "dashboard"},
-            consume_flash=False,
         )
 
 
 @router.post("/bots")
 async def create_bot(request: Request):
     form = await _form(request)
-    if not csrf_ok(request, form.get("csrf_token")):
-        return _bad_form(request, "/", "The form expired. Try again.")
     location = " ".join(str(form.get("location") or "").split())
     source = str(form.get("source") or "")
     slugs = [str(item) for item in form.getlist("professions")]
@@ -275,11 +245,10 @@ async def create_bot(request: Request):
             db,
             bot,
             "info",
-            "Bot added. Collection continues on the server if you close the browser.",
+            "Bot added. Collection continues in the cloud worker if this PC is off.",
             now,
         )
-        flash(request, "Bot added. You can close this page.", "ok")
-        return RedirectResponse(f"/bots/{bot.id}", status_code=303)
+        return _go(f"/bots/{bot.id}", "Bot added.")
 
 
 def _profession_snapshot(row: Profession) -> dict:
@@ -308,16 +277,12 @@ async def stop_bot(request: Request, bot_id: int):
 
 
 async def _set_bot_status(request: Request, bot_id: int, status: str):
-    form = await _form(request)
     fallback = f"/bots/{bot_id}"
-    if not csrf_ok(request, form.get("csrf_token")):
-        return _bad_form(request, fallback, "The form expired. Try again.")
     now = _now()
     with session_scope() as db:
         bot = db.get(Bot, bot_id)
         if bot is None:
-            flash(request, "That bot no longer exists.", "error")
-            return RedirectResponse("/", status_code=303)
+            return _go("/", "That bot no longer exists.")
         from app.services.runner import add_log
 
         if status == "running":
@@ -335,21 +300,21 @@ async def _set_bot_status(request: Request, bot_id: int, status: str):
             if not has_capacity(window, adapter.quota, 1):
                 bot.status = "limit_reached"
                 add_log(db, bot, "warning", "Still at this source's free quota. It will resume when the quota resets.", now)
-                flash(request, "The free quota is still used up. The bot stays paused until it resets.", "info")
+                notice = "The free quota is still used up. The bot stays paused until it resets."
             else:
                 bot.status = "running"
                 add_log(db, bot, "info", "Started. The worker will carry on from the saved position.", now)
-                flash(request, "Bot started.", "ok")
+                notice = "Bot started."
         elif status == "paused":
             bot.status = "paused"
             add_log(db, bot, "info", "Paused. Start continues from here.", now)
-            flash(request, "Bot paused.", "ok")
+            notice = "Bot paused."
         else:
             bot.status = "stopped"
             add_log(db, bot, "info", "Stopped. Progress is saved. Start continues from here.", now)
-            flash(request, "Bot stopped. Progress is saved.", "ok")
+            notice = "Bot stopped. Progress is saved."
         bot.updated_at = now
-    return RedirectResponse(fallback, status_code=303)
+    return _go(fallback, notice)
 
 
 @router.get("/bots/{bot_id}", response_class=HTMLResponse)
@@ -358,8 +323,7 @@ def bot_detail(request: Request, bot_id: int):
     with session_scope() as db:
         bot = db.get(Bot, bot_id)
         if bot is None:
-            flash(request, "That bot no longer exists.", "error")
-            return RedirectResponse("/", status_code=303)
+            return _go("/", "That bot no longer exists.")
         context = _bot_context(db, settings, bot)
         context["active"] = "dashboard"
         return _render(request, "bot.html", context)
@@ -372,7 +336,7 @@ def bot_partial(request: Request, bot_id: int):
         bot = db.get(Bot, bot_id)
         if bot is None:
             return HTMLResponse("This bot no longer exists.", status_code=404)
-        return _render(request, "_bot_live.html", _bot_context(db, settings, bot), consume_flash=False)
+        return _render(request, "_bot_live.html", _bot_context(db, settings, bot))
 
 
 def _bot_context(db, settings: Settings, bot: Bot) -> dict:
@@ -443,8 +407,6 @@ def professions_page(request: Request):
 @router.post("/professions")
 async def add_profession(request: Request):
     form = await _form(request)
-    if not csrf_ok(request, form.get("csrf_token")):
-        return _bad_form(request, "/professions", "The form expired. Try again.")
     label = " ".join(str(form.get("label") or "").split())
     if len(label) < 2 or len(label) > 80:
         return _bad_form(request, "/professions", "Enter a profession name.")
@@ -475,32 +437,25 @@ async def add_profession(request: Request):
                 created_at=utcnow(),
             )
         )
-    flash(request, f"Added {label}.", "ok")
-    return RedirectResponse("/professions", status_code=303)
+    return _go("/professions", f"Added {label}.")
 
 
 @router.post("/professions/{slug}/delete")
 async def delete_profession(request: Request, slug: str):
-    form = await _form(request)
-    if not csrf_ok(request, form.get("csrf_token")):
-        return _bad_form(request, "/professions", "The form expired. Try again.")
+    await _form(request)
     with session_scope() as db:
         row = db.scalar(select(Profession).where(Profession.slug == slug))
         if row is not None:
             db.delete(row)
-    flash(request, "Profession removed. Bots already running keep the copy they started with.", "ok")
-    return RedirectResponse("/professions", status_code=303)
+    return _go("/professions", "Profession removed. Bots already running keep the copy they started with.")
 
 
 @router.post("/professions/restore")
 async def restore_professions(request: Request):
-    form = await _form(request)
-    if not csrf_ok(request, form.get("csrf_token")):
-        return _bad_form(request, "/professions", "The form expired. Try again.")
+    await _form(request)
     with session_scope() as db:
         added = restore_builtins(db)
-    flash(request, f"Built-in list refreshed. {added} added back.", "ok")
-    return RedirectResponse("/professions", status_code=303)
+    return _go("/professions", f"Built-in list refreshed. {added} added back.")
 
 
 def _split_words(text: str, fallback: list[str]) -> list[str]:

@@ -13,9 +13,6 @@ class Settings(BaseSettings):
     )
 
     environment: str = "development"
-    secret_key: str = "dev-only-change-me"
-    admin_username: str = "admin"
-    admin_password: str = "changeme"
     database_url: str = "sqlite:///./data/leadlane.db"
 
     usage_timezone: str = "Europe/London"
@@ -66,24 +63,6 @@ def normalize_database_url(url: str) -> str:
     if url.startswith("postgresql://"):
         return "postgresql+psycopg://" + url[len("postgresql://") :]
     return url
-
-
-def insecure_defaults(settings: Settings) -> list[str]:
-    problems = []
-    if settings.secret_key in {"", "dev-only-change-me", "change-me"}:
-        problems.append("SECRET_KEY")
-    if settings.admin_password in {"", "changeme", "change-me"}:
-        problems.append("ADMIN_PASSWORD")
-    return problems
-
-
-def assert_production_config(settings: Settings) -> None:
-    if settings.environment.lower() != "production":
-        return
-    problems = insecure_defaults(settings)
-    if problems:
-        names = ", ".join(problems)
-        raise SystemExit(f"Refusing to start in production until you set: {names}")
 
 
 @lru_cache
