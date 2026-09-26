@@ -1,0 +1,71 @@
+<section class="panel">
+  <div class="panel-head">
+    <h2>Free quotas</h2>
+  </div>
+  <p class="worker {% if worker.online %}is-on{% else %}is-off{% endif %}">{{ worker.detail }}</p>
+  <div class="quotas">
+    {% for row in quotas %}
+    <article class="quota">
+      <header>
+        <h3>{{ row.label }}</h3>
+        <p>{{ row.used }} / {{ row.limit }}</p>
+      </header>
+      <p><strong>{{ row.title }}</strong> · resets {{ format_dt(row.reset_at) }}</p>
+      <p class="hint">{{ row.detail }}</p>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+<section class="panel">
+  <div class="panel-head">
+    <h2>Bots</h2>
+  </div>
+  {% if bots %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Professions</th>
+          <th>Area</th>
+          <th>Source</th>
+          <th>Status</th>
+          <th>Progress</th>
+          <th>New leads</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for bot in bots %}
+        <tr>
+          <td><a href="/bots/{{ bot.id }}">{{ profession_list(bot) }}</a></td>
+          <td>{{ bot.location }}</td>
+          <td>{{ source_label(bot.source) }}</td>
+          <td><span class="pill pill-{{ bot.status }}">{{ status_label(bot.status) }}</span></td>
+          <td>{{ bot.progress_note or "—" }}</td>
+          <td>{{ bot.leads_found }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">No bots yet. Add one above. The worker keeps going after you leave.</p>
+  {% endif %}
+</section>
+<section class="panel">
+  <div class="panel-head">
+    <h2>Recent log</h2>
+  </div>
+  {% if logs %}
+  <ol class="log">
+    {% for entry in logs %}
+    <li class="with-job">
+      <time datetime="{{ entry.created_at.isoformat() }}">{{ format_dt(entry.created_at) }}</time>
+      <a href="/bots/{{ entry.bot_id }}">Bot {{ entry.bot_id }}</a>
+      <span class="level-{{ entry.level }}">{{ entry.message }}</span>
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <p class="empty">Logs appear here once a bot takes a step.</p>
+  {% endif %}
+</section>

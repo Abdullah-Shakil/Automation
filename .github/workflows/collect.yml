@@ -1,0 +1,32 @@
+name: Collect
+
+# Fallback only. This does not keep a worker running between invocations.
+# The always-on path is an Oracle Cloud Always Free VM. See the README.
+# A private GitHub repo includes 2,000 Actions minutes a month. An hourly run
+# that lasts several minutes will use that up. Leave the schedule commented
+# out unless the repository is public, or run it by hand with workflow_dispatch.
+on:
+  workflow_dispatch:
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python -m app.worker --max-seconds 480
+        env:
+          ENVIRONMENT: production
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          USER_AGENT: ${{ secrets.USER_AGENT }}
+          COMPANIES_HOUSE_API_KEY: ${{ secrets.COMPANIES_HOUSE_API_KEY }}
+          GOOGLE_PLACES_ENABLED: ${{ secrets.GOOGLE_PLACES_ENABLED }}
+          GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+          DIRECTORY_SEARCH_URL_TEMPLATE: ${{ secrets.DIRECTORY_SEARCH_URL_TEMPLATE }}

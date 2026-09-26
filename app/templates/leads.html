@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Leads · Leadlane{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <p class="eyebrow">Leads</p>
+    <h1>Companies stored so far</h1>
+  </div>
+</header>
+<form method="get" action="/leads" class="filters">
+  <label>
+    <span>Search</span>
+    <input name="q" value="{{ filters.q }}" placeholder="Name, description, postcode, phone">
+  </label>
+  <label>
+    <span>Profession</span>
+    <select name="profession">
+      <option value="">Any</option>
+      {% for profession in professions %}
+      <option value="{{ profession }}" {% if filters.profession == profession %}selected{% endif %}>{{ profession }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>
+    <span>Source</span>
+    <select name="source">
+      <option value="">Any</option>
+      {% for source in sources %}
+      <option value="{{ source }}" {% if filters.source == source %}selected{% endif %}>{{ source_label(source) }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label class="check">
+    <input type="checkbox" name="has_email" value="1" {% if filters.has_email %}checked{% endif %}>
+    <span>Has email</span>
+  </label>
+  <label class="check">
+    <input type="checkbox" name="has_phone" value="1" {% if filters.has_phone %}checked{% endif %}>
+    <span>Has phone</span>
+  </label>
+  <button type="submit">Filter</button>
+</form>
+<p class="count">{{ total }} compan{{ "y" if total == 1 else "ies" }}</p>
+{% if leads %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Business</th>
+        <th>Profession</th>
+        <th>Description</th>
+        <th>Address</th>
+        <th>Phone</th>
+        <th>Website</th>
+        <th>Email</th>
+        <th>Source</th>
+        <th>Found</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for lead in leads %}
+      <tr>
+        <td>{{ lead.business_name }}</td>
+        <td>{{ lead.profession }}</td>
+        <td>{{ lead.description or "—" }}</td>
+        <td>{{ lead.address or "—" }}</td>
+        <td>{{ lead.phone or "—" }}</td>
+        <td>
+          {% if lead.website %}
+          <a href="{{ lead.website }}" rel="noreferrer">{{ lead.website }}</a>
+          {% else %}—{% endif %}
+        </td>
+        <td>{{ lead.email or "—" }}</td>
+        <td>
+          {% if lead.primary_source_url %}
+          <a href="{{ lead.primary_source_url }}" rel="noreferrer">{{ lead.sources or source_label(lead.primary_source) }}</a>
+          {% else %}
+          {{ lead.sources or source_label(lead.primary_source) }}
+          {% endif %}
+        </td>
+        <td>{{ format_dt(lead.date_found) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if pages > 1 %}
+<nav class="pager" aria-label="Pages">
+  {% for number in range(1, pages + 1) %}
+  <a href="/leads?{{ query_base }}{% if query_base %}&{% endif %}page={{ number }}" class="{% if number == page %}is-current{% endif %}">{{ number }}</a>
+  {% endfor %}
+</nav>
+{% endif %}
+{% else %}
+<p class="empty">No companies match. Add a bot, or loosen the filter.</p>
+{% endif %}
+{% endblock %}

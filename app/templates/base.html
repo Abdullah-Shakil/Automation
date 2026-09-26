@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Leadlane{% endblock %}</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560;9..144,650&family=Outfit:wght@380;480;560&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body class="{% if not active %}bare{% endif %}">
+  {% if active %}
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="/">
+        <span class="mark" aria-hidden="true"></span>
+        <span>Leadlane</span>
+      </a>
+      <p class="brand-note">Company records, collected on the server.</p>
+      <nav>
+        <a href="/" class="{% if active == 'dashboard' %}is-current{% endif %}">Bots</a>
+        <a href="/leads" class="{% if active == 'leads' %}is-current{% endif %}">Leads</a>
+        <a href="/professions" class="{% if active == 'professions' %}is-current{% endif %}">Professions</a>
+      </nav>
+      <form method="post" action="/logout" class="logout">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit">Log out</button>
+      </form>
+    </aside>
+    <main>
+      {% if flash %}
+      <p class="flash flash-{{ flash.category }}" role="status">{{ flash.message }}</p>
+      {% endif %}
+      {% block content %}{% endblock %}
+      <footer>
+        Company records from Companies House under the Open Government Licence.
+        Map data © OpenStreetMap contributors, ODbL.
+      </footer>
+    </main>
+  </div>
+  {% else %}
+  <main class="login-wrap">
+    {% if flash %}
+    <p class="flash flash-{{ flash.category }}" role="status">{{ flash.message }}</p>
+    {% endif %}
+    {% block bare %}{% endblock %}
+  </main>
+  {% endif %}
+  <script>
+    (function () {
+      const region = document.querySelector("[data-poll]");
+      if (!region) return;
+      const url = region.getAttribute("data-poll");
+      async function refresh() {
+        try {
+          const response = await fetch(url, { headers: { "Accept": "text/html" } });
+          if (response.redirected) return;
+          if (!response.ok) return;
+          region.innerHTML = await response.text();
+        } catch (error) {
+          /* Leave the last good markup in place. */
+        }
+      }
+      setInterval(refresh, 4000);
+    })();
+  </script>
+</body>
+</html>

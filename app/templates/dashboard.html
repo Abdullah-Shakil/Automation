@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Bots · Leadlane{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <p class="eyebrow">Bots</p>
+    <h1>Collect companies while you're away</h1>
+  </div>
+</header>
+<p class="lede">Add a bot with a profession, an area, and a source. It runs in the background until that source's free quota is used, then pauses and carries on when the quota resets. Closing the browser does not stop it.</p>
+
+<section class="panel start-panel">
+  <div class="panel-head">
+    <h2>Add a bot</h2>
+  </div>
+  <form method="post" action="/bots" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <fieldset>
+      <legend>Professions</legend>
+      <div class="checks">
+        {% for profession in professions %}
+        <label class="check">
+          <input type="checkbox" name="professions" value="{{ profession.slug }}">
+          <span>{{ profession.label }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      <p class="hint"><a href="/professions">Add another trade or profession</a></p>
+    </fieldset>
+    <label for="location">Area</label>
+    <input id="location" name="location" required maxlength="120" placeholder="Hackney, London">
+    <fieldset>
+      <legend>Data source</legend>
+      <div class="sources">
+        {% for source in sources %}
+        <label class="source {% if not source.available %}is-disabled{% endif %}">
+          <input type="radio" name="source" value="{{ source.key }}" {% if not source.available %}disabled{% endif %} {% if source.checked %}checked{% endif %}>
+          <span>
+            <strong>{{ source.label }}</strong>
+            <small>{{ source.description }}</small>
+            <small>Free quota: {{ source.quota_title }}</small>
+            {% if not source.available %}<small class="reason">{{ source.reason }}</small>{% endif %}
+          </span>
+        </label>
+        {% endfor %}
+      </div>
+    </fieldset>
+    {% if unsupported %}
+    <details class="unsupported">
+      <summary>Social networks are not collected</summary>
+      <ul>
+        {% for source in unsupported %}
+        <li><strong>{{ source.label }}.</strong> {{ source.description }}</li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+    <button type="submit" class="primary">Add bot</button>
+  </form>
+</section>
+
+<div data-poll="/partials/dashboard">
+  {% include "_live.html" %}
+</div>
+{% endblock %}
