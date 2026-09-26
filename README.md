@@ -2,7 +2,7 @@
 
 Leadlane stores UK company records for five fixed trades: **Electricians, Gardeners, Painters, Plumbers, Solicitors**. Six shared tables hold everything: **bots**, **workers**, **logs**, **leads**, **usage**, **settings**.
 
-**Workers** (Serper / Tavily / SerpApi) are started and stopped on the Workers tab. **Bots** are usage meters for each data source — no start/stop there. When GitHub Actions or cron-job.org runs the cloud collector (`LEADLANE_CLOUD_WORKER=1`), each started worker walks the bot list, skips sources with no free quota left, and continues until every eligible bot (or that worker) is exhausted.
+**Cloud** hosts (GitHub Actions and wake-ups) keep collection going offline. **Runners** (Serper / Tavily / SerpApi) are started on the Runners tab — start any number; each drives bots until the task or quota is done. **Bots** are every API-key and free data source (meters only). **cron-job.org** only wakes GitHub; set it up under GitHub’s profile → Helpers.
 
 The dashboard runs on your Windows PC and does not ask you to sign in. It only reads and writes the shared database. It does not collect. Collection runs in the cloud so it continues with the PC off. Records stay in the database. There is no email drafting and no CSV export.
 
@@ -72,9 +72,9 @@ These are not used, because they are not a free always-on worker: Render, Railwa
 
 Until `ENABLE_SCHEDULE` is `true`, the 3-hour schedule is skipped. Run workflow still works.
 
-### cron-job.org — no card
+### cron-job.org — GitHub helper (no card)
 
-Free HTTPS cron (https://cron-job.org/en/). Use this when you do not want GitHub to delay or skip a scheduled run.
+Free HTTPS cron (https://cron-job.org/en/). It does not collect leads — it only POSTs `workflow_dispatch` so GitHub Actions runs on a reliable interval. In the dashboard it lives under **GitHub Actions schedule → profile → Helpers**, not as its own scheduler row.
 
 1. GitHub → Settings → Developer settings → Fine-grained tokens. This repository only. Permission: Actions, Read and write. Copy the token. It expires, so renew it.
 2. On cron-job.org create a job (every 3 hours on a private repo):
@@ -163,11 +163,14 @@ Put source keys in `.env` on the PC (so the dashboard can show Connected) and th
 | `DATABASE_URL` | `.env` and Actions secret | [Neon](https://neon.tech) or [Supabase](https://supabase.com) | Neon free project; Supabase free project pauses after about 7 idle days |
 | `USER_AGENT` | `.env` and Actions secret | None | Identify the app. No `example.com` |
 | `COMPANIES_HOUSE_API_KEY` | `.env` and Actions secret | [Companies House](https://developer.company-information.service.gov.uk/) | 600 requests / 5 minutes |
+| `GOOGLE_PLACES_API_KEY` | `.env` and Actions secret | [Google Maps Platform](https://console.cloud.google.com/google/maps-apis) | Maps credit; Leadlane 100 / UK day |
 | `SERPER_API_KEY` | `.env` and Actions secret | [serper.dev](https://serper.dev/) | About 2,500 trial queries; Leadlane uses 100 / UK day |
 | `TAVILY_API_KEY` | `.env` and Actions secret | [Tavily](https://app.tavily.com/home) | About 1,000 credits / month; Leadlane uses 50 / UK day |
 | `SERPAPI_API_KEY` | `.env` and Actions secret | [serpapi.com](https://serpapi.com/) | About 250 searches / month; Leadlane uses 20 / UK day |
 | `GEMINI_API_KEY` | `.env` and Actions secret | [Google AI Studio](https://aistudio.google.com/apikey) | Model daily limit, AI assist only |
 | `GROQ_API_KEY` | `.env` and Actions secret | [Groq console](https://console.groq.com/keys) | Model daily limit, AI assist only |
+| `SCRAPINGBEE_API_KEY` | `.env` and Actions secret | [ScrapingBee](https://app.scrapingbee.com/) | ~1,000 free credits; used when a company site blocks direct fetch |
+| `APIFY_TOKEN` | `.env` and Actions secret | [Apify](https://console.apify.com/account/integrations) | Free compute credit; optional `APIFY_ACTOR_ID` for actors |
 | `ENABLE_SCHEDULE` | GitHub Actions **variable** `true` | None | Turns on the 3-hour schedule. No card |
 | `GH_DISPATCH_TOKEN` | cron-job.org, Cloudflare, Deno, or Vercel only | [Fine-grained GitHub token](https://github.com/settings/personal-access-tokens) | Actions: Read and write, this repo. Not stored in Leadlane |
 | `GH_REPO` | The same trigger | None | `OWNER/REPO` |

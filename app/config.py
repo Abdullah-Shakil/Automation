@@ -1,9 +1,12 @@
 from functools import lru_cache
+from pathlib import Path
 from urllib.parse import quote_plus, urlparse
 from zoneinfo import ZoneInfo
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 
 def build_supabase_database_url(
@@ -40,7 +43,7 @@ def build_supabase_database_url(
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(_ENV_FILE),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -76,18 +79,26 @@ class Settings(BaseSettings):
     serper_api_key: str = ""
     tavily_api_key: str = ""
     serpapi_api_key: str = ""
+    google_places_api_key: str = ""
+    scrapingbee_api_key: str = ""
+    apify_token: str = ""
+    apify_actor_id: str = ""
     # Mirrors of cloud schedulers. Empty means that scheduler is off.
     # The dashboard never collects. GitHub Actions is the process that does.
     leadlane_github_schedule: str = ""
     leadlane_cronjob_org: str = ""
     leadlane_cloudflare_cron: str = ""
     leadlane_vercel_cron: str = ""
+    leadlane_gcp_cron: str = ""
+    leadlane_render: str = ""
+    leadlane_apify_host: str = ""
     wikidata_sparql_url: str = "https://query.wikidata.org/sparql"
     wikidata_min_interval_seconds: float = 1.2
 
     nominatim_url: str = "https://nominatim.openstreetmap.org/search"
     overpass_url: str = "https://overpass-api.de/api/interpreter"
     companies_house_api_base: str = "https://api.company-information.service.gov.uk"
+    google_places_min_interval_seconds: float = 1.0
 
     @field_validator("usage_timezone")
     @classmethod
@@ -102,10 +113,17 @@ class Settings(BaseSettings):
         "serper_api_key",
         "tavily_api_key",
         "serpapi_api_key",
+        "google_places_api_key",
+        "scrapingbee_api_key",
+        "apify_token",
+        "apify_actor_id",
         "leadlane_github_schedule",
         "leadlane_cronjob_org",
         "leadlane_cloudflare_cron",
         "leadlane_vercel_cron",
+        "leadlane_gcp_cron",
+        "leadlane_render",
+        "leadlane_apify_host",
         "wikidata_sparql_url",
         "user_agent",
         "supabase_url",

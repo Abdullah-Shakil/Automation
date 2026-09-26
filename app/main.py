@@ -98,6 +98,9 @@ class CatchErrorsMiddleware(BaseHTTPMiddleware):
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
     try:
         init_db()
     except Exception:

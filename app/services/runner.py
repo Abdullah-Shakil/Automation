@@ -398,7 +398,9 @@ def _run_step(db, settings, registry, bot, worker, adapter, ctx, window, quota, 
     if worker_row is not None and not stopped_mid:
         worker_row.requests_made += spent
         worker_row.run_seconds += elapsed
-        worker_row.leads_found += stored
+        # Only credit leads this worker's own API produced (not native bots it unlocked).
+        if bot.key == worker_key:
+            worker_row.leads_found += stored
         worker_row.last_run_at = now
         worker_row.progress_note = bot.progress_note
         worker_row.last_error = ""

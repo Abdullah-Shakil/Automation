@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/styles.css?v=schema14">
+  <link rel="stylesheet" href="/static/styles.css?v=schema29">
   <script>
     (function () {
       try {
@@ -20,19 +20,20 @@
     })();
   </script>
 </head>
-<body>
+<body class="{% block body_class %}{% endblock %}">
   <div class="atmosphere" aria-hidden="true">
     <div class="atmosphere-grid"></div>
     <div class="atmosphere-glow"></div>
   </div>
 
   <header class="top">
-    <a class="brand" href="/?tab=workers" aria-label="Leadlane home">
+    <a class="brand" href="/?tab=cloud" aria-label="Leadlane home">
       <span class="brand-mark">Leadlane</span>
       <span class="brand-sub">UK</span>
     </a>
     <nav class="nav" aria-label="Primary">
-      <a href="/?tab=workers" class="{% if active == 'workers' %}is-current{% endif %}">Workers</a>
+      <a href="/?tab=cloud" class="{% if active == 'cloud' %}is-current{% endif %}">Cloud</a>
+      <a href="/?tab=runners" class="{% if active == 'runners' %}is-current{% endif %}">Runners</a>
       <a href="/?tab=bots" class="{% if active == 'bots' %}is-current{% endif %}">Bots</a>
       <a href="/leads" class="{% if active == 'leads' %}is-current{% endif %}">Leads</a>
     </nav>
@@ -70,10 +71,10 @@
   </div>
 
   <footer class="foot">
-    <span>Six tables · workers start collection · GitHub / cron runs the cloud worker</span>
+    <span>Cloud hosts · Runners drive bots · Bots hold API keys</span>
   </footer>
 
-  <script src="/static/app.js?v=schema9"></script>
+  <script src="/static/app.js?v=schema17"></script>
   <script>
     (function () {
       var region = document.querySelector("[data-poll]");

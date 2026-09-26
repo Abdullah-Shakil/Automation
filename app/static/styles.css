@@ -129,8 +129,8 @@ button { cursor: pointer; }
   align-items: center;
   gap: 1rem;
   padding: 0.7rem 1.5rem;
-  backdrop-filter: blur(14px) saturate(1.2);
-  background: var(--chrome);
+  /* Solid so scrolled content / pager glow cannot show through */
+  background: var(--paper);
   border-bottom: 1px solid var(--line);
 }
 .brand {
@@ -283,9 +283,91 @@ h2 {
 .view-head p { margin: 0; color: var(--ink-soft); }
 .view-head .eyebrow a { color: var(--accent-ink); text-decoration: none; font-weight: 700; }
 .view-head .eyebrow a:hover { text-decoration: underline; }
-.leads-table { min-width: 1100px; }
+.leads-table {
+  min-width: 1100px;
+  /* separate + solid thead bg so sticky header does not let body text bleed through */
+  border-collapse: separate;
+  border-spacing: 0;
+}
 .leads-table a { text-decoration: none; color: inherit; }
 .leads-table a:hover { color: var(--accent-ink); }
+.leads-table tbody td {
+  line-height: 1.4;
+}
+.leads-table .cell-clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  word-break: break-word;
+  max-width: 18rem;
+}
+.leads-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--panel-solid);
+  background-clip: padding-box;
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+.leads-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem 1rem;
+  margin: 0;
+  flex: 0 0 auto;
+}
+.leads-toolbar .count { margin: 0; }
+.leads-toolbar .pager { margin: 0; }
+.leads-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem; /* space between toolbar and table */
+  min-height: 0;
+}
+.table-wrap.leads-scroll {
+  flex: 1 1 0;
+  min-height: 0;
+  height: 0; /* flex fills remaining stack height */
+  max-height: none;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+/*
+  Leads: keep the intro text above. Scroll down to the leads pane —
+  toolbar + gap + table fill the remaining viewport (under the sticky top bar).
+*/
+body.page-leads {
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+body.page-leads > .top {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+body.page-leads > main {
+  width: min(1180px, calc(100% - 2.5rem));
+  margin: 0 auto;
+  padding: 0.5rem 0 2rem;
+}
+body.page-leads > .foot {
+  display: block;
+}
+body.page-leads .view-head {
+  display: block;
+  margin: 1.25rem 0 1rem;
+}
+body.page-leads .leads-stack {
+  /* Full reading pane once scrolled into view under the sticky nav */
+  height: calc(100vh - 3.75rem);
+  height: calc(100dvh - 3.75rem);
+}
 
 /* ——— Panels / sections ——— */
 .panel, .login-card {
@@ -1196,10 +1278,56 @@ a.button.primary, .button.primary {
 .usage-none { color: var(--muted); }
 .usage-inline { margin-top: 0.35rem; }
 
-  margin: 1.25rem 0 0.55rem;
+.profile-tabs {
+  display: flex;
+  gap: 0.35rem;
+  margin: 0.85rem 0 1rem;
+  padding: 0.2rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--chrome);
+}
+.profile-tab {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 650;
+  font-size: 0.85rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: calc(var(--radius) - 2px);
+  cursor: pointer;
+}
+.profile-tab:hover { color: var(--ink); }
+.profile-tab.is-active {
+  background: var(--panel-solid);
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--line);
+}
+.profile-tab-panel { min-height: 4rem; }
+.helper-card {
+  padding: 0.85rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.helper-card:last-child { border-bottom: 0; }
+.helper-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+.helper-head h3 {
+  margin: 0;
   font-family: var(--font-display);
   font-size: 1.1rem;
   font-weight: 650;
+}
+.helper-setup {
+  margin: 0.5rem 0;
+  font-size: 0.9rem;
+  color: var(--ink-soft);
 }
 
 @media (max-width: 900px) {

@@ -1,4 +1,4 @@
-"""Dashboard routes — Workers start/stop, Bots are usage meters, Leads list."""
+"""Dashboard routes — Cloud hosts, Runners start/stop, Bots meters, Leads list."""
 
 from urllib.parse import quote
 
@@ -58,7 +58,7 @@ def _tab_error_html(title: str, detail: str, retry_href: str = "/") -> str:
     return (
         '<section class="panel tab-error" role="alert">'
         f'<h2 class="section-title">{safe_title}</h2>'
-        '<p class="hint">This tab could not load. Other tabs should still work — try Workers, Bots, or Leads above.</p>'
+        '<p class="hint">This tab could not load. Other tabs should still work — try Cloud, Runners, Bots, or Leads above.</p>'
         f'<p class="flash flash-error"><code>{safe_detail}</code></p>'
         f'<p class="hint"><a href="{safe_retry}">Retry this tab</a></p>'
         "</section>"
@@ -72,7 +72,7 @@ def _dashboard_shell(request: Request, tab: str, tab_error: str):
         "dashboard.html",
         {
             "tab": tab,
-            "active": "bots" if tab == "bots" else "workers",
+            "active": tab if tab in {"cloud", "runners", "bots"} else "runners",
             "trade_label": "",
             "tab_error": tab_error,
         },
@@ -82,9 +82,11 @@ def _dashboard_shell(request: Request, tab: str, tab_error: str):
 
 def _tab_from_request(request: Request) -> str:
     tab = (request.query_params.get("tab") or "").strip().lower()
-    if tab in {"workers", "bots"}:
+    if tab == "workers":
+        return "runners"
+    if tab in {"cloud", "runners", "bots"}:
         return tab
-    return "workers"
+    return "cloud"
 
 
 def _ensure_rows(db) -> None:
@@ -102,7 +104,11 @@ def _source_views(settings: Settings, db, now) -> tuple[list[dict], list[dict]]:
         used = 0
         reset_at = window_bounds(now, quota)[1]
         bot = bots_by_key.get(adapter.key)
-        if adapter.group == "collect" and bot is not None:
+        env_name = ""
+        from app.profiles import BOT_PROFILES
+
+        env_name = (BOT_PROFILES.get(adapter.key) or {}).get("env_name") or ""
+        if adapter.group in {"collect", "enrich"}:
             window = ensure_window(db, adapter.key, now, quota)
             used = window.requests_used
             _start, reset_at = window_bounds(now, quota)
@@ -113,11 +119,13 @@ def _source_views(settings: Settings, db, now) -> tuple[list[dict], list[dict]]:
             "quota_title": quota.title,
             "quota_detail": quota.detail,
             "used": used,
-            "limit": quota.requests,
+            "limit": quota.requests if quota.requests else None,
             "reset_at": reset_at,
             "available": available,
             "reason": reason,
             "bot": bot,
+            "env_name": env_name,
+            "group": adapter.group,
         }
         if adapter.group == "unsupported":
             unsupported.append(item)
@@ -127,9 +135,13 @@ def _source_views(settings: Settings, db, now) -> tuple[list[dict], list[dict]]:
 
 
 def _worker_rows(settings: Settings, db, now) -> list[dict]:
-    ensure_checks(settings)
+    # ensure_checks is invoked by the route before the DB session opens.
     rows = []
     db_workers = {w.key: w for w in db.scalars(select(Worker).order_by(Worker.id.asc())).all()}
+    # Per-worker leads = companies whose primary_source is that worker's API.
+    lead_counts = dict(
+        db.execute(select(Lead.primary_source, func.count()).group_by(Lead.primary_source)).all()
+    )
     for spec in default_workers.all():
         if not spec.can_collect:
             # Still show AI-assist keys as inactive info? User asked workers with start/stop for collect.
@@ -156,6 +168,9 @@ def _worker_rows(settings: Settings, db, now) -> list[dict]:
             window = ensure_window(db, spec.key, now, quota)
             used = window.requests_used
             _s, reset_at = window_bounds(now, quota)
+        leads_found = int(lead_counts.get(spec.key) or 0)
+        if row is not None and int(row.leads_found or 0) != leads_found:
+            row.leads_found = leads_found
         rows.append(
             {
                 "key": spec.key,
@@ -175,7 +190,7 @@ def _worker_rows(settings: Settings, db, now) -> list[dict]:
                 "conn": conn,
                 "conn_kind": conn_kind,
                 "row": row,
-                "leads_found": int(row.leads_found or 0) if row else 0,
+                "leads_found": leads_found,
                 "is_running": bool(row is not None and row.status in {"running", "limit_reached"}),
                 "can_start": bool(available and row is not None and row.status not in {"running", "limit_reached"}),
             }
@@ -184,7 +199,7 @@ def _worker_rows(settings: Settings, db, now) -> list[dict]:
 
 
 def _assist_workers(settings: Settings) -> list[dict]:
-    ensure_checks(settings)
+    # ensure_checks runs in the route before the DB session.
     rows = []
     for spec in default_workers.all():
         if spec.can_collect:
@@ -220,40 +235,53 @@ def _assist_workers(settings: Settings) -> list[dict]:
     return rows
 
 
-def _profile_payload(sources: list[dict], workers: list[dict], cloud_runners: list[dict] | None = None) -> dict:
+def _profile_payload(
+    sources: list[dict],
+    workers: list[dict],
+    cloud_runners: list[dict] | None = None,
+    *,
+    total_leads: int = 0,
+    github_helpers: list[dict] | None = None,
+) -> dict:
     bots = []
     for source in sources:
         bot = source.get("bot")
-        if bot is None:
-            continue
-        pct = round(100 * source["used"] / max(source["limit"], 1), 1) if source["limit"] else None
+        pct = round(100 * source["used"] / max(source["limit"] or 1, 1), 1) if source.get("limit") else None
         reset_at = source.get("reset_at")
+        key = (bot.key if bot is not None else source.get("key")) or ""
+        if not key:
+            continue
         bots.append(
             merge_profile(
                 "bot",
-                bot.key,
+                key,
                 {
-                    "id": f"bot-{bot.key}",
-                    "key": bot.key,
+                    "id": f"bot-{key}",
+                    "key": key,
                     "kind": "bot",
-                    "name": bot.name or source["label"],
+                    "name": (bot.name if bot is not None else None) or source["label"],
                     "description": source["description"],
-                    "status": bot.status,
-                    "status_label": bot.status.replace("_", " "),
+                    "status": bot.status if bot is not None else ("on" if source.get("available") else "off"),
+                    "status_label": (
+                        bot.status.replace("_", " ")
+                        if bot is not None
+                        else ("Connected" if source.get("available") else "Not connected")
+                    ),
                     "used": source["used"],
-                    "limit": source["limit"],
+                    "limit": source.get("limit"),
                     "quota_title": source["quota_title"],
                     "quota_detail": source.get("quota_detail") or "",
                     "reset_at": reset_at.isoformat() if reset_at else None,
                     "reset_in": format_remaining(reset_at) if reset_at else None,
                     "pct_used": pct,
-                    "leads_found": bot.leads_found,
-                    "progress_note": bot.progress_note or "",
-                    "last_error": bot.last_error or "",
+                    "leads_found": bot.leads_found if bot is not None else None,
+                    "progress_note": (bot.progress_note if bot is not None else "") or "",
+                    "last_error": (bot.last_error if bot is not None else "") or "",
                     "reason": source.get("reason") or "",
                     "connected": source.get("available"),
                     "conn": "Connected" if source.get("available") else "Not connected",
-                    "profile_href": f"/profiles/bot/{bot.key}",
+                    "env_name": source.get("env_name") or "",
+                    "profile_href": f"/profiles/bot/{key}",
                 },
             )
         )
@@ -293,8 +321,24 @@ def _profile_payload(sources: list[dict], workers: list[dict], cloud_runners: li
                 },
             )
         )
+    helper_rows = []
+    for h in github_helpers or []:
+        helper_rows.append(
+            {
+                "key": h["key"],
+                "label": h["label"],
+                "summary": h.get("summary") or "",
+                "setup": h.get("setup") or "",
+                "on": bool(h.get("on")),
+                "conn": "Connected" if h.get("on") else "Off",
+                "env_name": "LEADLANE_CRONJOB_ORG" if h["key"] == "cronjob_org" else "",
+                "source_url": "https://cron-job.org/en/" if h["key"] == "cronjob_org" else "",
+                "console_url": "https://console.cron-job.org/" if h["key"] == "cronjob_org" else "",
+            }
+        )
     schedulers = []
     for runner in cloud_runners or []:
+        is_github = runner["key"] == "github_schedule"
         schedulers.append(
             merge_profile(
                 "scheduler",
@@ -312,10 +356,11 @@ def _profile_payload(sources: list[dict], workers: list[dict], cloud_runners: li
                     "used": None,
                     "limit": None,
                     "quota_title": "Scheduler — no API quota",
-                    "leads_found": None,
-                    "selected": bool(runner.get("selected")),
+                    "leads_found": total_leads if is_github else None,
+                    "selected": False,
                     "needs_card": bool(runner.get("needs_card")),
                     "setup": runner.get("setup") or "",
+                    "helpers": helper_rows if is_github else [],
                     "profile_href": f"/profiles/scheduler/{runner['key']}",
                 },
             )
@@ -324,7 +369,7 @@ def _profile_payload(sources: list[dict], workers: list[dict], cloud_runners: li
 
 
 def _dashboard_context(db, settings: Settings, tab: str) -> dict:
-    from app.cloud.runners import get_trade_preset, runner_views, selected_runner
+    from app.cloud.runners import get_trade_preset, github_helpers, table_runner_views
     from app.services.enrich import website_usage
 
     _ensure_rows(db)
@@ -332,14 +377,21 @@ def _dashboard_context(db, settings: Settings, tab: str) -> dict:
     sources, unsupported = _source_views(settings, db, now)
     workers = _worker_rows(settings, db, now)
     trade = get_trade_preset(db)
-    cloud_runners = runner_views(settings, selected_runner(db))
+    cloud_runners = table_runner_views(settings)
+    helpers = github_helpers(settings)
     total_leads = int(db.scalar(select(func.count()).select_from(Lead)) or 0)
     logs = db.scalars(select(Log).order_by(Log.id.desc()).limit(20)).all()
     assist = _assist_workers(settings)
-    profiles = _profile_payload(sources, workers, cloud_runners)
+    profiles = _profile_payload(
+        sources,
+        workers,
+        cloud_runners,
+        total_leads=total_leads,
+        github_helpers=helpers,
+    )
     for item in assist:
         key = item.get("key") or ""
-        profiles.setdefault("workers", []).append(
+        profiles.setdefault("bots", []).append(
             {
                 **item,
                 "id": f"worker-{key}",
@@ -360,12 +412,13 @@ def _dashboard_context(db, settings: Settings, tab: str) -> dict:
         "workers": workers,
         "assist_workers": assist,
         "cloud_runners": cloud_runners,
+        "github_helpers": helpers,
         "total_leads": total_leads,
         "website_usage": website_usage(db, now),
         "worker": heartbeat_view(db, settings, now),
         "logs": logs,
         "profiles": profiles,
-        "active": "bots" if tab == "bots" else "workers",
+        "active": tab if tab in {"cloud", "runners", "bots"} else "runners",
     }
 
 
@@ -374,6 +427,11 @@ def dashboard(request: Request):
     settings = get_settings()
     tab = _tab_from_request(request)
     try:
+        # Connection checks before the DB session so polls do not hold dirty rows open.
+        if tab in {"runners", "bots"}:
+            from app.workers.checks import ensure_checks
+
+            ensure_checks(settings)
         with session_scope() as db:
             return _render(request, "dashboard.html", _dashboard_context(db, settings, tab))
     except Exception as exc:
@@ -385,6 +443,10 @@ def dashboard_partial(request: Request):
     settings = get_settings()
     tab = _tab_from_request(request)
     try:
+        if tab in {"runners", "bots"}:
+            from app.workers.checks import ensure_checks
+
+            ensure_checks(settings)
         with session_scope() as db:
             return _render(request, "_dashboard_tab.html", _dashboard_context(db, settings, tab))
     except Exception as exc:
@@ -401,18 +463,18 @@ async def start_worker(request: Request, worker_key: str):
         try:
             spec = default_workers.get(worker_key)
         except KeyError:
-            return _bad("/?tab=workers", "Unknown worker.")
+            return _bad("/?tab=runners", "Unknown worker.")
         if not spec.can_collect:
-            return _bad("/?tab=workers", "That worker cannot collect leads.")
+            return _bad("/?tab=runners", "That worker cannot collect leads.")
         available, reason = spec.is_available(settings)
         if not available:
-            return _bad("/?tab=workers", reason or "Connect this worker in .env first.")
+            return _bad("/?tab=runners", reason or "Connect this worker in .env first.")
         now = _now()
         with session_scope() as db:
             _ensure_rows(db)
             row = db.scalars(select(Worker).where(Worker.key == worker_key)).first()
             if row is None:
-                return _bad("/?tab=workers", "Worker row missing. Refresh and try again.")
+                return _bad("/?tab=runners", "Worker row missing. Refresh and try again.")
             from app.services.runner import add_log
 
             if row.status == "completed":
@@ -432,9 +494,9 @@ async def start_worker(request: Request, worker_key: str):
                 message="Worker started. Cloud / GitHub will cycle bots with remaining quota.",
                 now=now,
             )
-        return _go("/?tab=workers", f"{spec.label} started.")
+        return _go("/?tab=runners", f"{spec.label} started.")
     except Exception as exc:
-        return _bad("/?tab=workers", f"Could not start worker: {exc}")
+        return _bad("/?tab=runners", f"Could not start worker: {exc}")
 
 
 @router.post("/workers/{worker_key}/stop")
@@ -444,7 +506,7 @@ async def stop_worker(request: Request, worker_key: str):
         with session_scope() as db:
             row = db.scalars(select(Worker).where(Worker.key == worker_key)).first()
             if row is None:
-                return _bad("/?tab=workers", "That worker no longer exists.")
+                return _bad("/?tab=runners", "That worker no longer exists.")
             from app.services.runner import add_log
 
             row.status = "stopped"
@@ -455,9 +517,9 @@ async def stop_worker(request: Request, worker_key: str):
             if bot is not None and bot.status == "active":
                 bot.status = "idle"
                 bot.updated_at = now
-        return _go("/?tab=workers", "Worker stopped.")
+        return _go("/?tab=runners", "Worker stopped.")
     except Exception as exc:
-        return _bad("/?tab=workers", f"Could not stop worker: {exc}")
+        return _bad("/?tab=runners", f"Could not stop worker: {exc}")
 
 
 @router.post("/trade-preset")
@@ -469,44 +531,76 @@ async def choose_trade_preset(request: Request):
         preset = normalize_preset(str(form.get("trade_preset") or ""))
         with session_scope() as db:
             set_trade_preset(db, preset)
-        return _go("/?tab=workers", f"Finding: {preset_label(preset)}.")
+        return _go("/?tab=cloud", f"Finding: {preset_label(preset)}.")
     except Exception as exc:
-        return _bad("/?tab=workers", f"Could not save Find preset: {exc}")
+        return _bad("/?tab=cloud", f"Could not save Find preset: {exc}")
 
 
 @router.post("/cloud/runner")
 async def choose_cloud_runner(request: Request):
-    try:
-        from app.cloud.runners import RUNNERS, runner_is_on, set_selected_runner
-
-        form = await request.form()
-        key = str(form.get("runner") or "").strip()
-        match = next((item for item in RUNNERS if item.key == key), None)
-        settings = get_settings()
-        if match is None:
-            return _bad("/?tab=workers", "That cloud runner is not available.")
-        if match.needs_card:
-            return _bad("/?tab=workers", f"{match.label} needs a card, so it stays off.")
-        if not runner_is_on(settings, match):
-            return _bad("/?tab=workers", f"{match.label} stays off until its switch is set.")
-        with session_scope() as db:
-            set_selected_runner(db, key)
-        return _go("/?tab=workers", f"{match.label} selected as the scheduler label on this PC.")
-    except Exception as exc:
-        return _bad("/?tab=workers", f"Could not select cloud runner: {exc}")
+    # Schedulers are no longer exclusive — any number can be on via .env.
+    # Kept so old forms do not 404.
+    return _go(
+        "/?tab=cloud",
+        "Cloud hosts are independent. Turn each one on in .env; open GitHub → Helpers for cron-job.org.",
+    )
 
 
 @router.get("/leads", response_class=HTMLResponse)
-def leads_page(request: Request):
+def leads_page(request: Request, page: int = 1):
+    per_page = 50
+    page = max(1, int(page or 1))
     try:
         with session_scope() as db:
-            rows, total = search_leads(db, LeadFilters(page=1, per_page=5000))
-            return _render(request, "leads.html", {"leads": rows, "total": total, "active": "leads"})
+            rows, total = search_leads(db, LeadFilters(page=page, per_page=per_page))
+            pages = max(1, (total + per_page - 1) // per_page) if total else 1
+            if page > pages:
+                page = pages
+                rows, total = search_leads(db, LeadFilters(page=page, per_page=per_page))
+            range_start = 0 if total == 0 else (page - 1) * per_page + 1
+            range_end = min(page * per_page, total)
+            page_links = []
+            for p in range(1, pages + 1):
+                link_start = (p - 1) * per_page + 1
+                link_end = min(p * per_page, total) if total else 0
+                page_links.append(
+                    {
+                        "page": p,
+                        "label": f"{link_start}–{link_end}" if total else "0",
+                        "current": p == page,
+                    }
+                )
+            return _render(
+                request,
+                "leads.html",
+                {
+                    "leads": rows,
+                    "total": total,
+                    "active": "leads",
+                    "page": page,
+                    "pages": pages,
+                    "per_page": per_page,
+                    "range_start": range_start,
+                    "range_end": range_end,
+                    "page_links": page_links,
+                },
+            )
     except Exception as exc:
         return _render(
             request,
             "leads.html",
-            {"active": "leads", "leads": [], "total": 0, "tab_error": f"Internal error loading leads: {exc}"},
+            {
+                "active": "leads",
+                "leads": [],
+                "total": 0,
+                "page": 1,
+                "pages": 1,
+                "per_page": per_page,
+                "range_start": 0,
+                "range_end": 0,
+                "page_links": [],
+                "tab_error": f"Internal error loading leads: {exc}",
+            },
             status_code=200,
         )
 
@@ -626,9 +720,11 @@ def profile_page(request: Request, kind: str, key: str):
     key_norm = (key or "").strip().lower()
     if kind_norm in {"bots", "bot"}:
         return _go(f"/?tab=bots&profile=bot-{key_norm}")
-    if kind_norm in {"schedulers", "scheduler", "runners", "runner", "apis", "api"}:
-        return _go(f"/?tab=workers&profile=scheduler-{key_norm}")
-    return _go(f"/?tab=workers&profile=worker-{key_norm}")
+    if key_norm == "cronjob_org":
+        return _go("/?tab=cloud&profile=scheduler-github_schedule&ptab=helpers")
+    if kind_norm in {"schedulers", "scheduler", "runners", "runner", "apis", "api", "cloud"}:
+        return _go(f"/?tab=cloud&profile=scheduler-{key_norm}")
+    return _go(f"/?tab=runners&profile=worker-{key_norm}")
 
 
 @router.get("/professions")
@@ -636,4 +732,4 @@ def profile_page(request: Request, kind: str, key: str):
 @router.post("/professions/{slug}/delete")
 @router.post("/professions/restore")
 async def professions_gone(request: Request, slug: str | None = None):
-    return _go("/?tab=workers", "Trades are fixed. Use Find on the Workers tab.")
+    return _go("/?tab=runners", "Trades are fixed. Use Find on the Runners tab.")

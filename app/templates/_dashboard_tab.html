@@ -1,18 +1,17 @@
-{% if tab == "workers" %}
+{% if tab == "cloud" %}
 <script type="application/json" id="profile-data">{{ profiles | tojson }}</script>
 <section class="panel">
-  <h2 class="section-title">Cloud collection</h2>
-  <p class="hint">Schedulers only wake GitHub Actions. Start at least one worker below so the cloud run has something to do. Find chooses All or one trade.</p>
+  <h2 class="section-title">Cloud</h2>
+  <p class="hint">Hosts that keep collection going while this PC is off. GitHub Actions is the main collector. Other rows only wake it. Open GitHub → Helpers for cron-job.org.</p>
   <div class="table-wrap">
-    <table class="sources-table sortable-table" data-table="runners">
+    <table class="sources-table sortable-table" data-table="cloud">
       <thead>
         <tr>
-          <th><button type="button" class="th-sort is-active" data-sort="name" data-dir="asc">Scheduler <span class="sort-ind" aria-hidden="true">↑</span></button></th>
+          <th><button type="button" class="th-sort is-active" data-sort="name" data-dir="asc">Host <span class="sort-ind" aria-hidden="true">↑</span></button></th>
           <th><button type="button" class="th-sort" data-sort="connected">Connected <span class="sort-ind" aria-hidden="true"></span></button></th>
           <th><button type="button" class="th-sort" data-sort="usage">Usage / remaining <span class="sort-ind" aria-hidden="true"></span></button></th>
           <th><button type="button" class="th-sort" data-sort="leads">Leads found <span class="sort-ind" aria-hidden="true"></span></button></th>
           <th>Find</th>
-          <th class="col-actions">Start / stop</th>
         </tr>
       </thead>
       <tbody>
@@ -24,25 +23,25 @@
             data-sort-name="{{ runner.label }}"
             data-sort-connected="{{ '1' if runner.on else '0' }}"
             data-sort-usage="0"
-            data-sort-leads="{{ total_leads }}">
+            data-sort-leads="{{ total_leads if runner.key == 'github_schedule' else 0 }}">
           <td>
             <button type="button" class="bot-name" data-open-profile="scheduler-{{ runner.key }}">{{ runner.label }}</button>
-            <small class="source-desc">{{ runner.summary }}</small>
+            <small class="source-desc">{{ runner.summary }}{% if runner.key == 'github_schedule' %} Open profile → Helpers for cron-job.org.{% endif %}</small>
           </td>
           <td>
             {% if runner.on %}
-            <span class="pill pill-running">Connected{% if runner.selected %} · selected{% endif %}</span>
+            <span class="pill pill-running">Connected</span>
             {% else %}
             <span class="pill pill-error">Off</span>
             {% endif %}
           </td>
           <td class="usage-cell">
             <div class="usage-meta"><span>—</span></div>
-            <div class="usage-reset"><span>Scheduler · no API quota</span></div>
+            <div class="usage-reset"><span>Cloud host · no API quota</span></div>
           </td>
-          <td>{{ total_leads }}</td>
+          <td>{% if runner.key == "github_schedule" %}{{ total_leads }}{% else %}<span class="muted">—</span>{% endif %}</td>
           <td class="trade-select" onclick="event.stopPropagation()">
-            {% if runner.key in ["github_schedule", "cronjob_org"] %}
+            {% if runner.key == "github_schedule" %}
             <form method="post" action="/trade-preset" data-keep-on-poll>
               <label class="sr-only" for="trade-{{ runner.key }}">What to find</label>
               <select id="trade-{{ runner.key }}" name="trade_preset" data-preserve-select="trade_preset" onchange="this.form.requestSubmit()">
@@ -56,22 +55,6 @@
             <span class="muted">—</span>
             {% endif %}
           </td>
-          <td class="col-actions" onclick="event.stopPropagation()">
-            <div class="row-actions">
-            {% if runner.needs_card %}
-            <button type="button" disabled title="Needs a card">Start</button>
-            {% elif runner.on and runner.selected %}
-            <button type="button" class="primary" disabled title="Already selected">Started</button>
-            {% elif runner.on %}
-            <form method="post" action="/cloud/runner">
-              <input type="hidden" name="runner" value="{{ runner.key }}">
-              <button type="submit" class="primary">Start</button>
-            </form>
-            {% else %}
-            <button type="button" disabled title="Turn this scheduler on in .env first">Start</button>
-            {% endif %}
-            </div>
-          </td>
         </tr>
         {% endfor %}
       </tbody>
@@ -79,11 +62,13 @@
   </div>
 </section>
 
+{% elif tab == "runners" or tab == "workers" %}
+<script type="application/json" id="profile-data">{{ profiles | tojson }}</script>
 <section class="panel">
-  <h2 class="section-title">Workers</h2>
-  <p class="hint">{{ worker.detail }} Website enrichment {{ website_usage.used }} / {{ website_usage.limit }} today.</p>
+  <h2 class="section-title">Runners</h2>
+  <p class="hint">Start any number of runners. Each one uses one or more bots from the Bots tab to finish a collect while Cloud is awake. Website enrichment {{ website_usage.used }} / {{ website_usage.limit }} today.</p>
   <div class="table-wrap">
-    <table class="bots-table sortable-table" data-table="workers">
+    <table class="bots-table sortable-table" data-table="runners">
       <thead>
         <tr>
           <th><button type="button" class="th-sort is-active" data-sort="name" data-dir="asc">Name <span class="sort-ind" aria-hidden="true">↑</span></button></th>
@@ -138,14 +123,11 @@
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="6" class="empty">No collect workers configured.</td></tr>
+        <tr><td colspan="6" class="empty">No collect runners configured.</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
-  {% if assist_workers %}
-  <p class="hint" style="margin-top:1rem">AI assist keys (no inventing leads): {% for a in assist_workers %}<button type="button" class="text-link" data-open-profile="worker-{{ a.key }}">{{ a.label }}</button> · <a href="{{ a.signup_url }}" target="_blank" rel="noopener">{{ a.signup_label }}</a> ({{ a.env_name }} · {{ a.conn or a.status }}){% if not loop.last %}, {% endif %}{% endfor %}.</p>
-  {% endif %}
 </section>
 
 <section class="panel">
@@ -161,15 +143,15 @@
     {% endfor %}
   </ol>
   {% else %}
-  <p class="empty">Logs appear when a worker or bot takes a step.</p>
+  <p class="empty">Logs appear when a runner or bot takes a step.</p>
   {% endif %}
 </section>
 
-{% else %}
+{% elif tab == "bots" %}
 <script type="application/json" id="profile-data">{{ profiles | tojson }}</script>
 <section class="panel">
   <h2 class="section-title">Bots</h2>
-  <p class="hint">{{ worker.detail }} Start workers on the Workers tab. The cloud run walks this list and skips bots whose free quota is used up.</p>
+  <p class="hint">Every API-key and free data source. Usage meters only — start collection on the Runners tab. Cloud cycles bots that still have quota.</p>
   <div class="table-wrap bots-table-wrap">
     <table class="bots-table sortable-table" data-table="bots">
       <thead>
@@ -186,7 +168,7 @@
         {% set bot = source.bot %}
         {% set pct = (100 * source.used / source.limit) if source.limit else 0 %}
         <tr class="bot-row {% if not source.available %}is-disabled{% endif %}"
-            {% if bot %}data-profile-id="bot-{{ bot.key }}" tabindex="0" role="button"{% endif %}
+            {% if bot %}data-profile-id="bot-{{ bot.key }}" tabindex="0" role="button"{% elif source.key %}data-profile-id="bot-{{ source.key }}" tabindex="0" role="button"{% endif %}
             data-sort-name="{{ bot.name if bot else source.label }}"
             data-sort-description="{{ source.description }}"
             data-sort-usage="{{ source.used }}"
@@ -194,10 +176,11 @@
             data-sort-leads="{{ bot.leads_found if bot else 0 }}">
           <td>
             {% if bot %}
-            <button type="button" class="bot-name" data-open-profile="bot-{{ bot.key }}">{{ bot.name or source.label }}</button>
+            <button type="button" class="bot-name" data-open-profile="bot-{{ bot.key }}">{{ bot.name }}</button>
             {% else %}
-            <strong>{{ source.label }}</strong>
+            <button type="button" class="bot-name" data-open-profile="bot-{{ source.key }}">{{ source.label }}</button>
             {% endif %}
+            <small class="source-desc">{{ source.quota_title }}{% if source.env_name %} · <code>{{ source.env_name }}</code>{% endif %}</small>
           </td>
           <td class="bot-desc">{{ source.description }}</td>
           <td>
@@ -209,11 +192,16 @@
             {% endif %}
           </td>
           <td class="usage-cell">
-            <div class="bar {% if pct >= 85 %}hot{% elif pct >= 60 %}warn{% endif %}"><span style="width:{% if source.limit %}{{ pct if pct > 4 else 4 }}{% else %}0{% endif %}%"></span></div>
+            {% if source.limit %}
+            <div class="bar {% if pct >= 85 %}hot{% elif pct >= 60 %}warn{% endif %}"><span style="width:{{ pct if pct > 4 else 4 }}%"></span></div>
             <div class="usage-meta"><span>{{ source.used }} / {{ source.limit }}</span></div>
             <div class="usage-reset"><span>{{ source.quota_title }}</span><span>Resets in {{ format_remaining(source.reset_at) }}</span></div>
+            {% else %}
+            <div class="usage-meta"><span>—</span></div>
+            <div class="usage-reset"><span>{{ source.quota_title }}</span></div>
+            {% endif %}
           </td>
-          <td>{% if bot %}{{ bot.leads_found }}{% else %}—{% endif %}</td>
+          <td>{% if bot %}{{ bot.leads_found }}{% else %}<span class="muted">—</span>{% endif %}</td>
         </tr>
         {% else %}
         <tr><td colspan="5" class="empty">No bots yet.</td></tr>
@@ -221,6 +209,9 @@
       </tbody>
     </table>
   </div>
+  {% if assist_workers %}
+  <p class="hint" style="margin-top:1rem">AI assist (no inventing leads): {% for a in assist_workers %}<button type="button" class="text-link" data-open-profile="worker-{{ a.key }}">{{ a.label }}</button> · <a href="{{ a.signup_url }}" target="_blank" rel="noopener">{{ a.signup_label }}</a> (<code>{{ a.env_name }}</code> · {{ a.conn or a.status }}){% if not loop.last %}, {% endif %}{% endfor %}.</p>
+  {% endif %}
   {% if unsupported %}
   <details class="unsupported">
     <summary>Social networks are not collected</summary>
@@ -231,5 +222,69 @@
     </ul>
   </details>
   {% endif %}
+</section>
+{% else %}
+{# Unknown tab must never fall through to Bots — show Cloud hosts only. #}
+<script type="application/json" id="profile-data">{{ profiles | tojson }}</script>
+<section class="panel">
+  <h2 class="section-title">Cloud</h2>
+  <p class="hint">Hosts that keep collection going while this PC is off. GitHub Actions is the main collector.</p>
+  <div class="table-wrap">
+    <table class="sources-table sortable-table" data-table="cloud">
+      <thead>
+        <tr>
+          <th><button type="button" class="th-sort is-active" data-sort="name" data-dir="asc">Host <span class="sort-ind" aria-hidden="true">↑</span></button></th>
+          <th><button type="button" class="th-sort" data-sort="connected">Connected <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th><button type="button" class="th-sort" data-sort="usage">Usage / remaining <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th><button type="button" class="th-sort" data-sort="leads">Leads found <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th>Find</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for runner in cloud_runners %}
+        <tr class="bot-row"
+            data-profile-id="scheduler-{{ runner.key }}"
+            tabindex="0"
+            role="button"
+            data-sort-name="{{ runner.label }}"
+            data-sort-connected="{{ '1' if runner.on else '0' }}"
+            data-sort-usage="0"
+            data-sort-leads="{{ total_leads if runner.key == 'github_schedule' else 0 }}">
+          <td>
+            <button type="button" class="bot-name" data-open-profile="scheduler-{{ runner.key }}">{{ runner.label }}</button>
+            <small class="source-desc">{{ runner.summary }}{% if runner.key == 'github_schedule' %} Open profile → Helpers for cron-job.org.{% endif %}</small>
+          </td>
+          <td>
+            {% if runner.on %}
+            <span class="pill pill-running">Connected</span>
+            {% else %}
+            <span class="pill pill-error">Off</span>
+            {% endif %}
+          </td>
+          <td class="usage-cell">
+            <div class="usage-meta"><span>—</span></div>
+            <div class="usage-reset"><span>Cloud host · no API quota</span></div>
+          </td>
+          <td>{% if runner.key == "github_schedule" %}{{ total_leads }}{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td class="trade-select" onclick="event.stopPropagation()">
+            {% if runner.key == "github_schedule" %}
+            <form method="post" action="/trade-preset" data-keep-on-poll>
+              <label class="sr-only" for="trade-fallback-{{ runner.key }}">What to find</label>
+              <select id="trade-fallback-{{ runner.key }}" name="trade_preset" data-preserve-select="trade_preset" onchange="this.form.requestSubmit()">
+                <option value="" {% if not trade_preset %}selected{% endif %}>All</option>
+                {% for opt in trade_options %}
+                <option value="{{ opt.id }}" {% if trade_preset == opt.id %}selected{% endif %}>{{ opt.label }}</option>
+                {% endfor %}
+              </select>
+            </form>
+            {% else %}
+            <span class="muted">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </section>
 {% endif %}

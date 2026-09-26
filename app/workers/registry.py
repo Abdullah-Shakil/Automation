@@ -8,7 +8,7 @@ _FREE_WORKERS: list[FreeWorker] = [
         label="Google Gemini",
         description=(
             "Google AI Studio free tier. Create an API key after signing in. "
-            "Useful for AI assist; lead discovery uses the search workers below so nothing is invented."
+            "Useful for AI assist; lead discovery uses the search runners so nothing is invented."
         ),
         signup_url="https://aistudio.google.com/apikey",
         signup_label="Google AI Studio",

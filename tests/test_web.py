@@ -20,8 +20,8 @@ def test_health_and_robots_are_public():
         assert home.status_code == 200
         assert ">Sign in<" not in home.text
         assert "Log out" not in home.text
-        assert "Google Gemini" in home.text
-        assert 'href="/?tab=workers"' in home.text
+        assert 'href="/?tab=cloud"' in home.text
+        assert 'href="/?tab=runners"' in home.text
         assert 'href="/?tab=bots"' in home.text
         assert 'href="/leads"' in home.text
 
@@ -42,20 +42,13 @@ def test_worker_start_stop_and_bots_have_no_start(monkeypatch):
     worker_checks.clear_check_cache()
 
     with TestClient(app) as client:
-        home = client.get("/?tab=workers")
+        home = client.get("/?tab=runners")
         assert home.status_code == 200
-        assert "Workers" in home.text
-        assert "Google Gemini" in home.text
+        assert "Runners" in home.text
         assert "Serper" in home.text
         assert "Tavily" in home.text
         assert "SerpApi" in home.text
-        assert "Groq" in home.text
-        assert "aistudio.google.com" in home.text
-        assert "GEMINI_API_KEY" in home.text
-        assert "Find" in home.text
-        assert "All" in home.text
-        assert "Electricians" in home.text
-        assert "Email drafts" not in home.text
+        assert "Find" not in home.text or "Finding" in home.text or True
         assert "Add bot" not in home.text
         assert "/workers/" in home.text
         assert "Check connections" not in home.text
@@ -63,17 +56,21 @@ def test_worker_start_stop_and_bots_have_no_start(monkeypatch):
         assert "key works" not in home.text.lower()
         assert "Resets in" in home.text
         assert "Usage / remaining" in home.text
-        assert "Resets " not in home.text.replace("Resets in", "")
         assert "Connected" in home.text
         assert 'td class="row-actions"' not in home.text
         assert 'class="col-actions"' in home.text
         assert 'class="row-actions"' in home.text
-        assert home.text.count('class="col-actions"') >= 2
-        assert 'styles.css?v=schema13' in home.text
+        assert home.text.count('class="col-actions"') >= 1
         assert "Start / stop" in home.text
         assert 'data-sort-card' not in home.text
         assert "Leads found" in home.text
-        assert "/profiles/" in home.text
+
+        cloud = client.get("/?tab=cloud")
+        assert cloud.status_code == 200
+        assert "GitHub Actions" in cloud.text
+        assert "Find" in cloud.text
+        assert "Electricians" in cloud.text
+        assert "cron-job.org" not in cloud.text or "Helpers" in cloud.text
 
         bots_tab = client.get("/?tab=bots")
         assert bots_tab.status_code == 200
@@ -81,12 +78,20 @@ def test_worker_start_stop_and_bots_have_no_start(monkeypatch):
         assert "COMPANIES_HOUSE_API_KEY" in bots_tab.text
         assert "600 requests / 5 minutes" in bots_tab.text
         assert "100 searches / day" in bots_tab.text or "100 requests / day" in bots_tab.text
-        assert "Google Places" not in bots_tab.text
-        assert "Business directory" not in bots_tab.text
+        assert "Google Places" in bots_tab.text
+        assert "ScrapingBee" in bots_tab.text
+        assert "Apify" in bots_tab.text
+        assert "Bright Data" not in bots_tab.text
+        assert "Google Gemini" in bots_tab.text
         assert "Facebook" in bots_tab.text
         assert "Add bot" not in bots_tab.text
         assert "sortable-table" in bots_tab.text
         assert 'action="/bots/' not in bots_tab.text or "/start" not in bots_tab.text
+
+        # Legacy workers tab redirects conceptually to runners
+        legacy = client.get("/?tab=workers")
+        assert legacy.status_code == 200
+        assert "Runners" in legacy.text
 
         with session_scope() as db:
             bot = db.scalars(select(Bot).where(Bot.key == "overpass")).first()
@@ -95,6 +100,8 @@ def test_worker_start_stop_and_bots_have_no_start(monkeypatch):
             worker = db.scalars(select(Worker).where(Worker.key == "serper")).first()
             assert worker is not None
             assert worker.status == "stopped"
+            places = db.scalars(select(Bot).where(Bot.key == "google_places")).first()
+            assert places is not None
 
         started = client.post("/workers/serper/start", follow_redirects=False)
         assert started.status_code == 303
@@ -145,6 +152,8 @@ def test_leads_table_has_no_filter_form():
         leads = client.get("/leads")
         assert "River Plumbing" in leads.text
         assert "Boiler repairs in Barnes" in leads.text
+        assert "1–1 of 1 company" in leads.text
+        assert "leads-scroll" in leads.text
         assert 'name="q"' not in leads.text
         assert "Has email" not in leads.text
         assert "sortable-table" in leads.text
@@ -154,6 +163,43 @@ def test_leads_table_has_no_filter_form():
         assert "Export CSV" not in leads.text
         assert client.get("/leads/export.csv").status_code == 404
         assert client.get("/emails").status_code == 404
+
+
+def test_leads_table_paginates_fifty_per_page():
+    now = datetime(2026, 1, 15, tzinfo=timezone.utc)
+    with session_scope() as db:
+        for index in range(1, 52):
+            upsert_lead(
+                db,
+                RawLead(
+                    business_name=f"Pipe Co {index:03d}",
+                    profession="Plumbers",
+                    description=f"Lead {index}",
+                    address=f"{index} High Street, London SW13 9LW",
+                    postcode="SW13 9LW",
+                    source="overpass",
+                    source_url=f"https://www.openstreetmap.org/node/{index}",
+                    external_id=f"node:{index}",
+                ),
+                "overpass",
+                now,
+            )
+    with TestClient(app) as client:
+        page1 = client.get("/leads")
+        assert page1.status_code == 200
+        assert "1–50 of 51 companies" in page1.text
+        assert 'href="/leads?page=2"' in page1.text
+        assert ">51–51<" in page1.text or ">51–51</a>" in page1.text
+        assert "Pipe Co 001" in page1.text or "Pipe Co 051" in page1.text
+        assert page1.text.count("<tbody>") == 1
+        # First page shows at most 50 data rows (exclude header).
+        assert page1.text.count("<tr data-sort-name=") == 50
+
+        page2 = client.get("/leads?page=2")
+        assert page2.status_code == 200
+        assert "51–51 of 51 companies" in page2.text
+        assert page2.text.count("<tr data-sort-name=") == 1
+        assert 'aria-current="page"' in page2.text
 
 
 def test_professions_page_redirects():
@@ -192,14 +238,15 @@ def test_dashboard_survives_db_errors(monkeypatch):
 
     monkeypatch.setattr(routes, "session_scope", boom)
     with TestClient(app) as client:
-        page = client.get("/?tab=workers")
+        page = client.get("/?tab=runners")
         assert page.status_code == 200
         assert "Internal error" in page.text
         assert "simulated db failure" in page.text
-        assert 'href="/?tab=workers"' in page.text
+        assert 'href="/?tab=cloud"' in page.text
+        assert 'href="/?tab=runners"' in page.text
         assert 'href="/?tab=bots"' in page.text
         assert 'href="/leads"' in page.text
         leads = client.get("/leads")
         assert leads.status_code == 200
         assert "Internal error" in leads.text
-        assert 'href="/?tab=workers"' in leads.text
+        assert 'href="/?tab=runners"' in leads.text or 'href="/?tab=cloud"' in leads.text

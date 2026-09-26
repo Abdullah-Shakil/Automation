@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{% if error_title %}{{ error_title }}{% else %}Error{% endif %} · Leadlane{% endblock %}
 {% block content %}
-{% set retry_href = retry_href or "/?tab=workers" %}
+{% set retry_href = retry_href or "/?tab=runners" %}
 {% include "_tab_error.html" %}
 {% endblock %}

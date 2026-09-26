@@ -4,14 +4,14 @@
 {% if tab_error %}
 {% set error_title = "Internal error" %}
 {% set error_detail = tab_error %}
-{% set retry_href = "/?tab=workers" %}
+{% set retry_href = "/?tab=runners" %}
 {% include "_tab_error.html" %}
 {% elif profile %}
 <header class="view-head">
   <p class="eyebrow">
     {% if profile.kind == "bot" %}<a href="/?tab=bots">Bots</a>
-    {% elif profile.kind == "scheduler" %}<a href="/?tab=workers">Workers · Schedulers</a>
-    {% else %}<a href="/?tab=workers">Workers</a>{% endif %}
+    {% elif profile.kind == "scheduler" %}<a href="/?tab=cloud">Cloud</a>
+    {% else %}<a href="/?tab=runners">Runners</a>{% endif %}
     · Profile
   </p>
   <h2>{{ profile.name }}</h2>
@@ -80,7 +80,7 @@
 {% else %}
 {% set error_title = "Not found" %}
 {% set error_detail = "That profile does not exist." %}
-{% set retry_href = "/?tab=workers" %}
+{% set retry_href = "/?tab=runners" %}
 {% include "_tab_error.html" %}
 {% endif %}
 {% endblock %}

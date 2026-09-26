@@ -5,7 +5,7 @@
   <p class="eyebrow"><a href="/?tab=bots">Bots</a></p>
   <h2>{% if bot %}{{ bot.name }}{% else %}Bot{% endif %}</h2>
   {% if bot %}
-  <p>Source key <code>{{ bot.key }}</code>. Start the matching worker (or any worker for Companies House / OSM / Wikidata) on the Workers tab.</p>
+  <p>Source key <code>{{ bot.key }}</code>. Start the matching runner (or any runner for Companies House / OSM / Wikidata) on the Runners tab.</p>
   {% endif %}
 </header>
 {% if tab_error %}

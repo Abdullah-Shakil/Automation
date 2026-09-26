@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.models import Lead
 from app.normalize import clip
-from app.services.usage import ensure_window, has_capacity, window_bounds
+from app.services.usage import ensure_window, has_capacity, limit_message, window_bounds
 from app.services.website_enrich import (
     normalise_start_url,
     parse_company_site,
@@ -22,6 +22,7 @@ from app.services.website_enrich import (
 )
 from app.sources.base import SourceQuota, http_headers
 from app.sources.companies_house import parse_officers
+from app.sources.unlockers import ScrapingBeeAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +33,13 @@ WEBSITE_QUOTA = SourceQuota(
     title="80 page fetches / day",
     detail=(
         "The cloud worker reads each company's own homepage, contact page, and about page, "
-        "after robots.txt. Eighty fetches per UK day, shared across every company, then it pauses until midnight."
+        "after robots.txt. Eighty fetches per UK day, shared across every company, then it pauses until midnight. "
+        "When ScrapingBee is Connected, blocked pages can retry through that unlocker."
     ),
 )
+
+SCRAPINGBEE_URL = "https://app.scrapingbee.com/api/v1/"
+_BLOCKED_STATUS = {401, 403, 429, 503}
 
 
 def website_usage(db: Session, now: datetime) -> dict:
@@ -138,6 +143,71 @@ def _enrich_officers(db: Session, settings: Settings, lead: Lead, now: datetime,
     return True
 
 
+def _fetch_via_scrapingbee(
+    db: Session,
+    settings: Settings,
+    client: httpx.Client,
+    url: str,
+    now: datetime,
+) -> tuple[str | None, str | None]:
+    adapter = ScrapingBeeAdapter()
+    ok, reason = adapter.is_available(settings)
+    if not ok:
+        return None, reason
+    bee = ensure_window(db, adapter.key, now, adapter.quota)
+    if not has_capacity(bee, adapter.quota, 1):
+        return None, limit_message(adapter.quota)
+    try:
+        response = client.get(
+            SCRAPINGBEE_URL,
+            params={
+                "api_key": settings.scrapingbee_api_key.strip(),
+                "url": url,
+                "render_js": "false",
+            },
+            timeout=40.0,
+        )
+    except httpx.HTTPError as exc:
+        bee.requests_used += 1
+        return None, f"ScrapingBee request failed: {exc}"
+    bee.requests_used += 1
+    if response.status_code >= 400:
+        return None, f"ScrapingBee HTTP {response.status_code}."
+    return response.text, None
+
+
+def _fetch_page_html(
+    db: Session,
+    settings: Settings,
+    client: httpx.Client,
+    url: str,
+    now: datetime,
+    *,
+    allow_unlocker: bool,
+) -> tuple[str | None, str | None]:
+    """Return (html, error). Direct fetch first; ScrapingBee if Connected and blocked."""
+    try:
+        response = client.get(url, headers=http_headers(settings.user_agent))
+    except httpx.HTTPError as exc:
+        if not allow_unlocker:
+            return None, f"Website request failed: {exc}"
+        html, err = _fetch_via_scrapingbee(db, settings, client, url, now)
+        if html is not None:
+            return html, None
+        return None, err or f"Website request failed: {exc}"
+
+    if response.status_code < 400:
+        return response.text, None
+
+    if allow_unlocker and response.status_code in _BLOCKED_STATUS:
+        html, err = _fetch_via_scrapingbee(db, settings, client, url, now)
+        if html is not None:
+            return html, None
+        return None, err or f"Homepage returned HTTP {response.status_code}."
+
+    return None, f"Homepage returned HTTP {response.status_code}."
+
+
 def _enrich_website(db: Session, settings: Settings, lead: Lead, now: datetime, client: httpx.Client) -> bool:
     start = normalise_start_url(lead.website)
     if start is None:
@@ -175,24 +245,25 @@ def _enrich_website(db: Session, settings: Settings, lead: Lead, now: datetime, 
             lead.enrichment_error = limit_message(WEBSITE_QUOTA)[:500]
             lead.updated_at = now
             return True
-        try:
-            response = client.get(page, headers=http_headers(settings.user_agent))
-        except httpx.HTTPError as exc:
-            _defer(lead, now, f"Website request failed: {exc}")
-            window.requests_used += 1
-            return True
+        html, err = _fetch_page_html(
+            db,
+            settings,
+            client,
+            page,
+            now,
+            allow_unlocker=(index == 0),
+        )
         window.requests_used += 1
-        if response.status_code >= 400:
+        if html is None:
             if index == 0:
-                _defer(lead, now, f"Homepage returned HTTP {response.status_code}.")
+                _defer(lead, now, err or "Homepage could not be fetched.")
                 return True
             continue
-        html = response.text
         if index == 0:
             first_html = html
-        _merge_site(merged, parse_company_site(html, str(response.url)))
+        _merge_site(merged, parse_company_site(html, page))
         if index == 0:
-            for extra in same_site_pages(first_html, str(response.url)):
+            for extra in same_site_pages(first_html, page):
                 if extra not in pages:
                     pages.append(extra)
             if len(pages) == 1:

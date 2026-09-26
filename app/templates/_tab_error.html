@@ -1,6 +1,6 @@
 <section class="panel tab-error" role="alert">
   <h2 class="section-title">{{ error_title or "Internal error" }}</h2>
-  <p class="hint">This tab could not load. Other tabs should still work — try Workers, Bots, or Leads above.</p>
+  <p class="hint">This tab could not load. Other tabs should still work — try Cloud, Runners, Bots, or Leads above.</p>
   <p class="flash flash-error"><code>{{ error_detail or tab_error or "Something went wrong." }}</code></p>
   <p class="hint"><a href="{{ retry_href or request.url.path }}">Retry this tab</a></p>
 </section>

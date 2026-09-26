@@ -40,17 +40,23 @@ def ensure_bots(db: Session) -> None:
                     location=SEARCH_LOCATION,
                     status="idle",
                     checkpoint={},
-                    progress_note="Ready. Start a worker on the Workers tab to collect.",
+                    progress_note="Ready. Start a runner on the Runners tab to collect.",
                     last_error="",
                     created_at=now,
                     updated_at=now,
                 )
             )
         else:
-            row.name = adapter.label
+            # Only write when something changed — avoids StaleDataError races while polls overlap.
+            changed = False
+            if row.name != adapter.label:
+                row.name = adapter.label
+                changed = True
             if not (row.location or "").strip():
                 row.location = SEARCH_LOCATION
-            row.updated_at = now
+                changed = True
+            if changed:
+                row.updated_at = now
 
 
 def ensure_workers(db: Session) -> None:
@@ -77,8 +83,9 @@ def ensure_workers(db: Session) -> None:
                 )
             )
         else:
-            row.name = worker.label
-            row.updated_at = now
+            if row.name != worker.label:
+                row.name = worker.label
+                row.updated_at = now
 
 
 # Kept for older imports / scripts that called restore_builtins

@@ -2,12 +2,18 @@
 {% block title %}{{ tab|capitalize }} · Leadlane{% endblock %}
 {% block content %}
 <header class="view-head">
-  {% if tab == "workers" %}
-  <h2>Workers</h2>
-  <p>Start a collect worker here. GitHub Actions / cron then cycles bots that still have free quota until every bot (or this worker) is exhausted.{% if trade_label %} Finding: <strong>{{ trade_label }}</strong>.{% endif %}</p>
-  {% else %}
+  {% if tab == "cloud" %}
+  <h2>Cloud</h2>
+  <p>Hosts that let bots run while this PC is off. GitHub Actions is the collector; other hosts only wake it.{% if trade_label %} Finding: <strong>{{ trade_label }}</strong>.{% endif %}</p>
+  {% elif tab == "runners" or tab == "workers" %}
+  <h2>Runners</h2>
+  <p>Start a runner to drive one or more bots on the Bots tab until the task (or quota) is done. Cloud executes the steps when awake.{% if trade_label %} Finding: <strong>{{ trade_label }}</strong>.{% endif %}</p>
+  {% elif tab == "bots" %}
   <h2>Bots</h2>
-  <p>One row per data source. Usage meters only — start and stop live on the Workers tab. Cloud runs the next bot with quota left.</p>
+  <p>All API-key and free data sources. Meters only — start and stop live on the Runners tab.</p>
+  {% else %}
+  <h2>Cloud</h2>
+  <p>Hosts that let bots run while this PC is off.</p>
   {% endif %}
 </header>
 <div data-poll="/partials/dashboard?tab={{ tab }}">

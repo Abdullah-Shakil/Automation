@@ -20,20 +20,25 @@ class Registry:
 
 def build_default_registry() -> Registry:
     from app.sources.companies_house import CompaniesHouseAdapter
+    from app.sources.google_places import GooglePlacesAdapter
     from app.sources.overpass import OverpassAdapter
     from app.sources.serpapi import SerpApiAdapter
     from app.sources.serper import SerperAdapter
     from app.sources.social import social_stubs
     from app.sources.tavily import TavilyAdapter
+    from app.sources.unlockers import ApifyAdapter, ScrapingBeeAdapter
     from app.sources.wikidata import WikidataAdapter
 
     registry = Registry()
     registry.register(CompaniesHouseAdapter())
+    registry.register(GooglePlacesAdapter())
     registry.register(OverpassAdapter())
     registry.register(WikidataAdapter())
     registry.register(SerperAdapter())
     registry.register(TavilyAdapter())
     registry.register(SerpApiAdapter())
+    registry.register(ScrapingBeeAdapter())
+    registry.register(ApifyAdapter())
     for stub in social_stubs():
         registry.register(stub)
     return registry

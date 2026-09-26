@@ -30,11 +30,12 @@ RUNNERS: tuple[CloudRunner, ...] = (
         summary=(
             "No card. Public repositories get unlimited minutes on standard runners. "
             "Private repositories get 2,000 minutes a month. "
-            "Scheduled runs can be delayed or skipped, so pair this with cron-job.org if you need a reliable start."
+            "Scheduled runs can be delayed or skipped — open this profile’s Helpers tab for cron-job.org."
         ),
         setup=(
             "Repository variable ENABLE_SCHEDULE=true turns the 3-hour schedule on. "
-            "Until that variable exists, scheduled runs are skipped. workflow_dispatch still works."
+            "Until that variable exists, scheduled runs are skipped. workflow_dispatch still works. "
+            "cron-job.org setup is under Helpers."
         ),
     ),
     CloudRunner(
@@ -44,11 +45,13 @@ RUNNERS: tuple[CloudRunner, ...] = (
         env_attr="leadlane_cronjob_org",
         summary=(
             "No card. Free HTTPS cron, down to once a minute. "
-            "It POSTs GitHub workflow_dispatch so a run is not left to the Actions scheduler."
+            "It only POSTs GitHub workflow_dispatch so Actions runs more often — it does not collect leads itself."
         ),
         setup=(
-            "Create a fine-grained GitHub token (Actions: Read and write, this repo only) and store it in the cron-job.org job, not in the app. "
-            "Set LEADLANE_CRONJOB_ORG=true here after the job exists. Keep the interval at 3 hours on a private repo."
+            "Create a fine-grained GitHub token (Actions: Read and write, this repo only) and store it in the cron-job.org job, not in Leadlane. "
+            "POST https://api.github.com/repos/OWNER/REPO/actions/workflows/collect.yml/dispatches "
+            "with body {\"ref\":\"main\",\"inputs\":{\"trade_preset\":\"all\"}}. "
+            "Every 15 minutes is a good free cadence. Set LEADLANE_CRONJOB_ORG=true so Helpers shows Connected."
         ),
     ),
     CloudRunner(
@@ -120,7 +123,12 @@ def runner_is_on(settings: Settings, runner: CloudRunner) -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
-def runner_views(settings: Settings, selected: str) -> list[dict]:
+# cron-job.org only wakes GitHub Actions — shown as a helper on the GitHub profile, not as a peer row.
+HELPER_RUNNER_KEYS = frozenset({"cronjob_org"})
+
+
+def runner_views(settings: Settings, selected: str = "") -> list[dict]:
+    """All configured runners (including helpers)."""
     rows = []
     for runner in RUNNERS:
         on = runner_is_on(settings, runner)
@@ -130,7 +138,8 @@ def runner_views(settings: Settings, selected: str) -> list[dict]:
                 "label": runner.label,
                 "needs_card": runner.needs_card,
                 "on": on,
-                "selected": selected == runner.key and on,
+                "selected": False,
+                "is_helper": runner.key in HELPER_RUNNER_KEYS,
                 "summary": runner.summary,
                 "setup": runner.setup,
                 "card_label": "Needs a card" if runner.needs_card else "No card",
@@ -138,6 +147,16 @@ def runner_views(settings: Settings, selected: str) -> list[dict]:
             }
         )
     return rows
+
+
+def table_runner_views(settings: Settings) -> list[dict]:
+    """Schedulers shown in the Cloud collection table (excludes helpers like cron-job.org)."""
+    return [row for row in runner_views(settings) if not row["is_helper"]]
+
+
+def github_helpers(settings: Settings) -> list[dict]:
+    """Helpers that only wake GitHub Actions (e.g. cron-job.org)."""
+    return [row for row in runner_views(settings) if row["is_helper"]]
 
 
 def selected_runner(db) -> str:

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Leads · Leadlane{% endblock %}
+{% block body_class %}page-leads{% endblock %}
 {% block content %}
 <header class="view-head">
   <h2>Leads</h2>
@@ -11,60 +12,83 @@
 {% set retry_href = "/leads" %}
 {% include "_tab_error.html" %}
 {% else %}
-<p class="count">{{ total }} compan{{ "y" if total == 1 else "ies" }}</p>
-{% if leads %}
-<div class="table-wrap">
-  <table class="leads-table sortable-table" data-table="leads">
-    <thead>
-      <tr>
-        <th><button type="button" class="th-sort is-active" data-sort="name" data-dir="asc">Name <span class="sort-ind" aria-hidden="true">↑</span></button></th>
-        <th><button type="button" class="th-sort" data-sort="email">Email <span class="sort-ind" aria-hidden="true"></span></button></th>
-        <th><button type="button" class="th-sort" data-sort="phone">Phone <span class="sort-ind" aria-hidden="true"></span></button></th>
-        <th><button type="button" class="th-sort" data-sort="mobile">Mobile <span class="sort-ind" aria-hidden="true"></span></button></th>
-        <th><button type="button" class="th-sort" data-sort="address">Address <span class="sort-ind" aria-hidden="true"></span></button></th>
-        <th><button type="button" class="th-sort" data-sort="town">Town <span class="sort-ind" aria-hidden="true"></span></button></th>
-        <th><button type="button" class="th-sort" data-sort="profession">Profession <span class="sort-ind" aria-hidden="true"></span></button></th>
-        <th><button type="button" class="th-sort" data-sort="description">Description <span class="sort-ind" aria-hidden="true"></span></button></th>
-        <th><button type="button" class="th-sort" data-sort="source">Source <span class="sort-ind" aria-hidden="true"></span></button></th>
-        <th><button type="button" class="th-sort" data-sort="found" data-dir="desc">Found <span class="sort-ind" aria-hidden="true"></span></button></th>
-        <th><button type="button" class="th-sort" data-sort="website">Website <span class="sort-ind" aria-hidden="true"></span></button></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for lead in leads %}
-      <tr data-sort-name="{{ lead.business_name }}"
-          data-sort-email="{{ lead.email or '' }}"
-          data-sort-phone="{{ lead.phone or '' }}"
-          data-sort-mobile="{{ lead.mobile or '' }}"
-          data-sort-address="{{ lead.address or '' }}"
-          data-sort-town="{{ lead.town or '' }}"
-          data-sort-profession="{{ lead.category or lead.profession or '' }}"
-          data-sort-description="{{ lead.description or '' }}"
-          data-sort-source="{{ lead.sources or lead.primary_source }}"
-          data-sort-found="{{ lead.date_found.isoformat() if lead.date_found else '' }}"
-          data-sort-website="{{ lead.website or '' }}">
-        <td><a class="bot-name" href="/leads/{{ lead.id }}">{{ lead.business_name }}</a></td>
-        <td>{{ lead.email or "—" }}</td>
-        <td>{{ lead.phone or "—" }}</td>
-        <td>{{ lead.mobile or "—" }}</td>
-        <td>{{ lead.address or "—" }}</td>
-        <td>{{ lead.town or "—" }}</td>
-        <td>{{ lead.category or lead.profession }}</td>
-        <td>{{ lead.description or "—" }}</td>
-        <td>{{ source_label(lead.primary_source) }}{% if lead.sources and lead.sources != lead.primary_source %} · {{ lead.sources }}{% endif %}</td>
-        <td>{{ format_dt(lead.date_found) }}</td>
-        <td>
-          {% if lead.website %}
-          <a href="{{ lead.website }}" rel="noreferrer">{{ lead.website }}</a>
-          {% else %}—{% endif %}
-        </td>
-      </tr>
+<div class="leads-stack">
+  <div class="leads-toolbar">
+    <p class="count">
+      {% if total == 0 %}
+      0 companies
+      {% else %}
+      {{ range_start }}–{{ range_end }} of {{ total }} compan{{ "y" if total == 1 else "ies" }}
+      {% endif %}
+    </p>
+    {% if pages > 1 %}
+    <nav class="pager" aria-label="Leads pages">
+      {% if page > 1 %}
+      <a href="/leads?page={{ page - 1 }}" rel="prev">Prev</a>
+      {% endif %}
+      {% for link in page_links %}
+      <a href="/leads?page={{ link.page }}" class="{% if link.current %}is-current{% endif %}"{% if link.current %} aria-current="page"{% endif %}>{{ link.label }}</a>
       {% endfor %}
-    </tbody>
-  </table>
+      {% if page < pages %}
+      <a href="/leads?page={{ page + 1 }}" rel="next">Next</a>
+      {% endif %}
+    </nav>
+    {% endif %}
+  </div>
+  {% if leads %}
+  <div class="table-wrap leads-scroll">
+    <table class="leads-table sortable-table" data-table="leads">
+      <thead>
+        <tr>
+          <th><button type="button" class="th-sort is-active" data-sort="name" data-dir="asc">Name <span class="sort-ind" aria-hidden="true">↑</span></button></th>
+          <th><button type="button" class="th-sort" data-sort="email">Email <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th><button type="button" class="th-sort" data-sort="phone">Phone <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th><button type="button" class="th-sort" data-sort="mobile">Mobile <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th><button type="button" class="th-sort" data-sort="address">Address <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th><button type="button" class="th-sort" data-sort="town">Town <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th><button type="button" class="th-sort" data-sort="profession">Profession <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th><button type="button" class="th-sort" data-sort="description">Description <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th><button type="button" class="th-sort" data-sort="source">Source <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th><button type="button" class="th-sort" data-sort="found" data-dir="desc">Found <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th><button type="button" class="th-sort" data-sort="website">Website <span class="sort-ind" aria-hidden="true"></span></button></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for lead in leads %}
+        <tr data-sort-name="{{ lead.business_name }}"
+            data-sort-email="{{ lead.email or '' }}"
+            data-sort-phone="{{ lead.phone or '' }}"
+            data-sort-mobile="{{ lead.mobile or '' }}"
+            data-sort-address="{{ lead.address or '' }}"
+            data-sort-town="{{ lead.town or '' }}"
+            data-sort-profession="{{ lead.category or lead.profession or '' }}"
+            data-sort-description="{{ lead.description or '' }}"
+            data-sort-source="{{ lead.sources or lead.primary_source }}"
+            data-sort-found="{{ lead.date_found.isoformat() if lead.date_found else '' }}"
+            data-sort-website="{{ lead.website or '' }}">
+          <td><a class="bot-name" href="/leads/{{ lead.id }}"><span class="cell-clamp">{{ lead.business_name }}</span></a></td>
+          <td>{{ lead.email or "—" }}</td>
+          <td>{{ lead.phone or "—" }}</td>
+          <td>{{ lead.mobile or "—" }}</td>
+          <td><span class="cell-clamp">{{ lead.address or "—" }}</span></td>
+          <td>{{ lead.town or "—" }}</td>
+          <td>{{ lead.category or lead.profession }}</td>
+          <td><span class="cell-clamp">{{ lead.description or "—" }}</span></td>
+          <td>{{ source_label(lead.primary_source) }}{% if lead.sources and lead.sources != lead.primary_source %} · {{ lead.sources }}{% endif %}</td>
+          <td>{{ format_dt(lead.date_found) }}</td>
+          <td>
+            {% if lead.website %}
+            <a href="{{ lead.website }}" rel="noreferrer">{{ lead.website }}</a>
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">No companies in the database yet. Start a runner on the Runners tab after a Cloud host is on.</p>
+  {% endif %}
 </div>
-{% else %}
-<p class="empty">No companies in the database yet. Start a worker on the Workers tab after a cloud scheduler is on.</p>
-{% endif %}
 {% endif %}
 {% endblock %}

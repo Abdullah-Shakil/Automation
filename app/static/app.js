@@ -7,6 +7,7 @@
   let profileList = [];
   let profileIndex = 0;
   let openProfileId = null;
+  let profileInnerTab = "overview";
 
   function escapeHtml(s) {
     return String(s ?? "")
@@ -134,8 +135,9 @@
       const workers = data.workers || [];
       const schedulers = data.schedulers || [];
       const params = new URLSearchParams(window.location.search);
-      const tab = params.get("tab") || "workers";
-      if (tab === "workers") profileList = [...workers, ...schedulers];
+      const tab = params.get("tab") || "cloud";
+      if (tab === "cloud") profileList = schedulers;
+      else if (tab === "runners" || tab === "workers") profileList = workers;
       else if (tab === "bots") profileList = bots;
       else profileList = [...bots, ...workers, ...schedulers];
     } catch (e) {
@@ -152,8 +154,8 @@
   }
 
   function kindLabel(b) {
-    if (b.kind === "worker") return "Worker profile";
-    if (b.kind === "scheduler") return "Scheduler profile";
+    if (b.kind === "worker") return "Runner profile";
+    if (b.kind === "scheduler") return "Cloud profile";
     if (b.kind === "api") return "API profile";
     return "Bot profile";
   }
@@ -163,12 +165,40 @@
     return `<a class="button" href="${escapeHtml(href)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`;
   }
 
+  function renderHelpersTab(helpers) {
+    if (!helpers || !helpers.length) {
+      return `<p class="hint">No helpers configured. Helpers only wake GitHub Actions more often — they do not collect leads.</p>`;
+    }
+    return helpers
+      .map((h) => {
+        const links = [];
+        if (h.source_url) links.push(linkBtn(h.source_url, "Website"));
+        if (h.console_url) links.push(linkBtn(h.console_url, "Console"));
+        return `
+        <article class="helper-card">
+          <div class="helper-head">
+            <h3>${escapeHtml(h.label)}</h3>
+            <span class="pill ${h.on ? "pill-running" : "pill-error"}">${escapeHtml(h.conn || (h.on ? "Connected" : "Off"))}</span>
+          </div>
+          <p class="profile-summary">${escapeHtml(h.summary || "")}</p>
+          ${h.env_name ? `<p class="hint">Env: <code>${escapeHtml(h.env_name)}</code> — set true when the cron job is live.</p>` : ""}
+          ${h.setup ? `<p class="pre helper-setup">${escapeHtml(h.setup)}</p>` : ""}
+          <div class="link-row">${links.join(" ")}</div>
+        </article>`;
+      })
+      .join("");
+  }
+
   function renderProfileSheet() {
     const b = profileList[profileIndex];
     if (!b) return;
     openProfileId = b.id || null;
     $("#profile-index").textContent = `${profileIndex + 1} / ${profileList.length}`;
     const st = statusClass(b.status);
+    const helpers = Array.isArray(b.helpers) ? b.helpers : [];
+    const hasHelpers = b.kind === "scheduler" && b.key === "github_schedule";
+    if (!hasHelpers) profileInnerTab = "overview";
+
     let usageHtml = `<p class="usage-none">${escapeHtml(b.quota_title || b.free_tier || "No usage cap")}</p>`;
     if (b.limit != null && b.used != null) {
       const pct = b.pct_used == null ? 0 : Math.max(4, b.pct_used);
@@ -191,13 +221,15 @@
     if (b.kind === "bot" && b.key) {
       links.push(`<a class="button" href="/bots/${escapeHtml(b.key)}">Open live page</a>`);
     }
-    $("#profile-body").innerHTML = `
-      <div class="profile-hero">
-        <p class="kind-tag">${kindLabel(b)}</p>
-        <h2 id="profile-title">${escapeHtml(b.name)}</h2>
-        <p class="role">${escapeHtml(b.role || "")}</p>
-        <span class="status ${st}">${escapeHtml(b.status_label || b.conn || b.status || "")}</span>
-      </div>
+
+    const tabs = hasHelpers
+      ? `<div class="profile-tabs" role="tablist">
+          <button type="button" class="profile-tab ${profileInnerTab === "overview" ? "is-active" : ""}" data-profile-tab="overview" role="tab" aria-selected="${profileInnerTab === "overview"}">Overview</button>
+          <button type="button" class="profile-tab ${profileInnerTab === "helpers" ? "is-active" : ""}" data-profile-tab="helpers" role="tab" aria-selected="${profileInnerTab === "helpers"}">Helpers</button>
+        </div>`
+      : "";
+
+    const overview = `
       <p class="profile-summary">${escapeHtml(b.profile_summary || b.description || "")}</p>
       <dl class="profile-dl">
         <div><dt>Source</dt><dd>${escapeHtml(b.source_name || "—")}</dd></div>
@@ -209,16 +241,41 @@
         ${b.reason ? `<div><dt>Note</dt><dd>${escapeHtml(b.reason)}</dd></div>` : ""}
         ${b.last_error ? `<div><dt>Last error</dt><dd>${escapeHtml(b.last_error)}</dd></div>` : ""}
         ${b.how_to ? `<div><dt>How to connect</dt><dd class="pre">${escapeHtml(b.how_to)}</dd></div>` : ""}
+        ${b.setup ? `<div><dt>Setup</dt><dd class="pre">${escapeHtml(b.setup)}</dd></div>` : ""}
       </dl>
       <div class="link-row">${links.join(" ")}</div>
       <h3 class="profile-section-title">Usage &amp; reset</h3>
-      ${usageHtml}
+      ${usageHtml}`;
+
+    const helpersHtml = `
+      <p class="hint">Helpers only call GitHub Actions more often. Leads still come from the GitHub collector.</p>
+      ${renderHelpersTab(helpers)}`;
+
+    $("#profile-body").innerHTML = `
+      <div class="profile-hero">
+        <p class="kind-tag">${kindLabel(b)}</p>
+        <h2 id="profile-title">${escapeHtml(b.name)}</h2>
+        <p class="role">${escapeHtml(b.role || "")}</p>
+        <span class="status ${st}">${escapeHtml(b.status_label || b.conn || b.status || "")}</span>
+      </div>
+      ${tabs}
+      <div class="profile-tab-panel">
+        ${profileInnerTab === "helpers" && hasHelpers ? helpersHtml : overview}
+      </div>
     `;
+
+    $$("[data-profile-tab]", $("#profile-body")).forEach((btn) => {
+      btn.addEventListener("click", () => {
+        profileInnerTab = btn.getAttribute("data-profile-tab") || "overview";
+        renderProfileSheet();
+      });
+    });
   }
 
-  function openProfileAt(index) {
+  function openProfileAt(index, { keepTab = false } = {}) {
     if (!profileList.length) return;
     profileIndex = ((index % profileList.length) + profileList.length) % profileList.length;
+    if (!keepTab) profileInnerTab = "overview";
     const overlay = $("#profile-overlay");
     overlay.hidden = false;
     overlay.setAttribute("aria-hidden", "false");
@@ -227,10 +284,18 @@
     $("#profile-close")?.focus();
   }
 
-  function openProfileById(id) {
+  function openProfileById(id, { tab = "overview" } = {}) {
     loadProfiles();
+    // cron-job lives under GitHub Helpers, not as its own scheduler row
+    if (id === "scheduler-cronjob_org") {
+      id = "scheduler-github_schedule";
+      tab = "helpers";
+    }
     const idx = profileList.findIndex((p) => p.id === id);
-    if (idx >= 0) openProfileAt(idx);
+    if (idx >= 0) {
+      profileInnerTab = tab === "helpers" ? "helpers" : "overview";
+      openProfileAt(idx, { keepTab: true });
+    }
   }
 
   function closeProfile() {
@@ -240,6 +305,7 @@
     overlay.setAttribute("aria-hidden", "true");
     document.body.classList.remove("profile-open");
     openProfileId = null;
+    profileInnerTab = "overview";
   }
 
   function wireProfiles() {
@@ -266,8 +332,10 @@
   }
 
   function openFromQuery() {
-    const id = new URLSearchParams(window.location.search).get("profile");
-    if (id) openProfileById(id);
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get("profile");
+    const tab = params.get("ptab") || "overview";
+    if (id) openProfileById(id, { tab });
   }
 
   function boot() {

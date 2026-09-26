@@ -78,14 +78,14 @@ BOT_PROFILES: dict[str, dict[str, Any]] = {
         "signup_label": "serper.dev",
         "env_name": "SERPER_API_KEY",
         "profile_summary": (
-            "Places + organic search for UK trades. Runs only when the Serper worker is started."
+            "Places + organic search for UK trades. Also available as a Runner that drives this bot and others."
         ),
         "free_tier": "Leadlane caps 100 searches / UK day",
         "how_to": (
             "1) Sign up at serper.dev\n"
             "2) Copy API key\n"
             "3) SERPER_API_KEY= in .env and GitHub secrets\n"
-            "4) Start the Serper worker on the Workers tab"
+            "4) Start the Serper runner on the Runners tab"
         ),
     },
     "tavily": {
@@ -98,9 +98,9 @@ BOT_PROFILES: dict[str, dict[str, Any]] = {
         "signup_url": "https://app.tavily.com/home",
         "signup_label": "Tavily dashboard",
         "env_name": "TAVILY_API_KEY",
-        "profile_summary": "UK trade search pages from Tavily. Needs the Tavily worker started.",
+        "profile_summary": "UK trade search pages from Tavily. Start the Tavily runner to collect with this bot.",
         "free_tier": "Leadlane caps 50 searches / UK day",
-        "how_to": "Create a key in the Tavily dashboard → TAVILY_API_KEY= → Start Tavily worker.",
+        "how_to": "Create a key in the Tavily dashboard → TAVILY_API_KEY= → Start Tavily on Runners.",
     },
     "serpapi": {
         "role": "SerpApi Google SERP",
@@ -112,37 +112,86 @@ BOT_PROFILES: dict[str, dict[str, Any]] = {
         "signup_url": "https://serpapi.com/",
         "signup_label": "serpapi.com",
         "env_name": "SERPAPI_API_KEY",
-        "profile_summary": "Organic / Maps results for UK trades. Needs the SerpApi worker started.",
+        "profile_summary": "Organic / Maps results for UK trades. Start the SerpApi runner to collect.",
         "free_tier": "Leadlane caps 20 searches / UK day",
-        "how_to": "Sign up → copy key → SERPAPI_API_KEY= → Start SerpApi worker.",
+        "how_to": "Sign up → copy key → SERPAPI_API_KEY= → Start SerpApi on Runners.",
+    },
+    "google_places": {
+        "role": "Google Places text search",
+        "origin": "Google Maps Platform Places API",
+        "source_name": "Google Places",
+        "source_url": "https://console.cloud.google.com/google/maps-apis",
+        "docs_url": "https://developers.google.com/maps/documentation/places/web-service/text-search",
+        "console_url": "https://console.cloud.google.com/google/maps-apis",
+        "signup_url": "https://console.cloud.google.com/google/maps-apis",
+        "signup_label": "Google Cloud Console",
+        "env_name": "GOOGLE_PLACES_API_KEY",
+        "profile_summary": (
+            "Official Places text search for UK trades — phone, website, address when Google has them. "
+            "From Information Hunters catalogue."
+        ),
+        "free_tier": "Maps monthly credit · Leadlane 100 / day",
+        "how_to": (
+            "1) Enable Places API (New) in Google Cloud\n"
+            "2) Create an API key\n"
+            "3) GOOGLE_PLACES_API_KEY= in .env and GitHub secrets"
+        ),
+    },
+    "scrapingbee": {
+        "role": "Contact unlocker · page fetch",
+        "origin": "ScrapingBee HTML API",
+        "source_name": "ScrapingBee",
+        "source_url": "https://www.scrapingbee.com/",
+        "docs_url": "https://www.scrapingbee.com/documentation/",
+        "console_url": "https://app.scrapingbee.com/account/login",
+        "signup_url": "https://app.scrapingbee.com/",
+        "signup_label": "ScrapingBee",
+        "env_name": "SCRAPINGBEE_API_KEY",
+        "profile_summary": "Fetches public business pages when direct HTTP is blocked. Not a discovery bot.",
+        "free_tier": "~1,000 free credits",
+        "how_to": "Sign up → copy API key → SCRAPINGBEE_API_KEY=",
+    },
+    "apify": {
+        "role": "Contact unlocker · actor",
+        "origin": "Apify platform",
+        "source_name": "Apify",
+        "source_url": "https://apify.com/",
+        "docs_url": "https://docs.apify.com/",
+        "console_url": "https://console.apify.com/",
+        "signup_url": "https://console.apify.com/account/integrations",
+        "signup_label": "Apify console",
+        "env_name": "APIFY_TOKEN",
+        "profile_summary": "Optional actor enrichment. Also usable as a Cloud host (LEADLANE_APIFY_HOST).",
+        "free_tier": "~$5 compute / month free",
+        "how_to": "Create token → APIFY_TOKEN= (optional APIFY_ACTOR_ID=)",
     },
 }
 
 # ---------------------------------------------------------------------------
-# Collect + assist workers
+# Collect runners (drive bots) + AI assist
 # ---------------------------------------------------------------------------
 
 WORKER_PROFILES: dict[str, dict[str, Any]] = {
     "serper": {
         **BOT_PROFILES["serper"],
-        "role": "Collect worker · Serper",
+        "role": "Collect runner · Serper",
         "profile_summary": (
-            "Startable free collector. When running, GitHub Actions / cron steps the Serper bot "
-            "and also enables native bots (Companies House, OSM, Wikidata) until quotas run out."
+            "Startable runner. When running, Cloud steps the Serper bot "
+            "and also cycles other bots with remaining quota."
         ),
     },
     "tavily": {
         **BOT_PROFILES["tavily"],
-        "role": "Collect worker · Tavily",
+        "role": "Collect runner · Tavily",
         "profile_summary": (
-            "Startable free collector. Cloud runs cycle Tavily and native bots while this worker is started."
+            "Startable runner. Cloud cycles Tavily and other bots while this runner is started."
         ),
     },
     "serpapi": {
         **BOT_PROFILES["serpapi"],
-        "role": "Collect worker · SerpApi",
+        "role": "Collect runner · SerpApi",
         "profile_summary": (
-            "Startable free collector. Cloud runs cycle SerpApi and native bots while this worker is started."
+            "Startable runner. Cloud cycles SerpApi and other bots while this runner is started."
         ),
     },
     "gemini": {
@@ -191,22 +240,26 @@ SCHEDULER_PROFILES: dict[str, dict[str, Any]] = {
         "console_url": "",
         "profile_summary": (
             "Runs python -m app.worker with LEADLANE_CLOUD_WORKER=1. "
-            "Turn on with repository variable ENABLE_SCHEDULE=true. Pair with cron-job.org for reliability."
+            "Turn on with repository variable ENABLE_SCHEDULE=true. "
+            "Use the Helpers tab for cron-job.org — it only wakes this collector more often."
         ),
         "free_tier": "Public unlimited / private 2,000 min/mo",
-        "how_to": "Set ENABLE_SCHEDULE=true. Put DATABASE_URL and API keys in Actions secrets.",
+        "how_to": "Set ENABLE_SCHEDULE=true. Put DATABASE_URL and API keys in Actions secrets. Cron-job.org setup is under Helpers.",
         "env_name": "ENABLE_SCHEDULE",
     },
     "cronjob_org": {
-        "role": "Cloud scheduler",
+        "role": "GitHub helper",
         "origin": "cron-job.org → GitHub workflow_dispatch",
         "source_name": "cron-job.org",
         "source_url": "https://cron-job.org/",
         "docs_url": "https://cron-job.org/en/help/",
         "console_url": "https://console.cron-job.org/",
-        "profile_summary": "HTTPS cron that POSTs workflow_dispatch so a run is not left to delayed schedules.",
+        "profile_summary": (
+            "HTTPS cron that POSTs workflow_dispatch so GitHub Actions runs on a reliable interval. "
+            "It does not collect leads — GitHub does."
+        ),
         "free_tier": "Free HTTPS cron",
-        "how_to": "Create a fine-grained GitHub token → store in cron-job.org → set LEADLANE_CRONJOB_ORG=true.",
+        "how_to": "Create a fine-grained GitHub token → store in cron-job.org → set LEADLANE_CRONJOB_ORG=true. Prefer every 15 minutes on a public repo.",
         "env_name": "LEADLANE_CRONJOB_ORG",
     },
     "cloudflare": {
@@ -222,7 +275,7 @@ SCHEDULER_PROFILES: dict[str, dict[str, Any]] = {
         "env_name": "LEADLANE_CLOUDFLARE_CRON",
     },
     "vercel": {
-        "role": "Cloud scheduler",
+        "role": "Cloud host",
         "origin": "Vercel Hobby cron → GitHub dispatch",
         "source_name": "Vercel",
         "source_url": "https://vercel.com/",
@@ -232,6 +285,42 @@ SCHEDULER_PROFILES: dict[str, dict[str, Any]] = {
         "free_tier": "Hobby cron (daily)",
         "how_to": "Copy cloud/vercel example → GH_DISPATCH_TOKEN → LEADLANE_VERCEL_CRON=true.",
         "env_name": "LEADLANE_VERCEL_CRON",
+    },
+    "gcp": {
+        "role": "Cloud host",
+        "origin": "Google Cloud Run Jobs + Scheduler",
+        "source_name": "Google Cloud Run",
+        "source_url": "https://console.cloud.google.com/run",
+        "docs_url": "https://cloud.google.com/run/docs/create-jobs",
+        "console_url": "https://console.cloud.google.com/run",
+        "profile_summary": "Free Cloud Run Jobs allowance can wake the collector while your PC is off.",
+        "free_tier": "240k vCPU-seconds / month (US)",
+        "how_to": "Deploy a Job or GitHub dispatcher → LEADLANE_GCP_CRON=true.",
+        "env_name": "LEADLANE_GCP_CRON",
+    },
+    "render": {
+        "role": "Cloud host",
+        "origin": "Render free web service",
+        "source_name": "Render",
+        "source_url": "https://render.com/",
+        "docs_url": "https://render.com/docs/free",
+        "console_url": "https://dashboard.render.com/",
+        "profile_summary": "Free web services sleep without traffic — better as a wake-up ping than a 24/7 worker.",
+        "free_tier": "750 instance hours / month",
+        "how_to": "Deploy a free service that dispatches GitHub → LEADLANE_RENDER=true.",
+        "env_name": "LEADLANE_RENDER",
+    },
+    "apify_host": {
+        "role": "Cloud host",
+        "origin": "Apify actor schedule",
+        "source_name": "Apify",
+        "source_url": "https://apify.com/",
+        "docs_url": "https://docs.apify.com/",
+        "console_url": "https://console.apify.com/",
+        "profile_summary": "Actor can poll or dispatch GitHub. Also add APIFY_TOKEN on the Bots tab.",
+        "free_tier": "~$5 compute / month",
+        "how_to": "APIFY_TOKEN + APIFY_ACTOR_ID → LEADLANE_APIFY_HOST=true.",
+        "env_name": "LEADLANE_APIFY_HOST",
     },
     "deno": {
         "role": "Cloud scheduler (needs card)",
